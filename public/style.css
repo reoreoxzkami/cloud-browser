@@ -1,0 +1,255 @@
+:root {
+  --bg-dark: #1e1e24;
+  --toolbar-bg: #2b2b36;
+  --toolbar-border: #3d3d4d;
+  --input-bg: #181820;
+  --input-text: #e0e0e0;
+  --accent-color: #4f80ff;
+  --accent-hover: #3b6cd8;
+  --status-good: #2ecc71;
+  --text-muted: #8c8c9e;
+  --footer-bg: #1e1e24;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #0d0d11;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: #fff;
+  user-select: none;
+}
+
+.browser-window {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ツールバー */
+.browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background-color: var(--toolbar-bg);
+  border-bottom: 1px solid var(--toolbar-border);
+  z-index: 10;
+}
+
+.nav-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-controls button,
+.action-controls button {
+  background: transparent;
+  border: none;
+  color: #c5c5d2;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  transition: all 0.15s ease;
+}
+
+.nav-controls button:hover,
+.action-controls button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.nav-controls button:active,
+.action-controls button:active {
+  transform: scale(0.95);
+}
+
+/* アドレスバー */
+.address-bar-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  background-color: var(--input-bg);
+  border: 1px solid var(--toolbar-border);
+  border-radius: 8px;
+  padding: 0 12px;
+  height: 36px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.address-bar-wrapper:focus-within {
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(79, 128, 255, 0.2);
+}
+
+.ssl-icon {
+  font-size: 12px;
+  color: var(--status-good);
+  margin-right: 8px;
+}
+
+#url-bar {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--input-text);
+  font-size: 14px;
+  outline: none;
+  user-select: auto;
+}
+
+#btn-go {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  transition: color 0.15s ease;
+}
+
+#btn-go:hover {
+  color: var(--accent-color);
+}
+
+/* アクションコントロール */
+.action-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.quality-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #aaa;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.quality-control input[type="range"] {
+  width: 60px;
+  cursor: pointer;
+  accent-color: var(--accent-color);
+}
+
+.stats-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-family: monospace;
+  color: #d1d1e0;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: var(--status-good);
+  box-shadow: 0 0 6px var(--status-good);
+}
+
+.divider {
+  color: #555;
+}
+
+/* メイン表示領域 */
+.viewport-container {
+  flex: 1;
+  position: relative;
+  background-color: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+#browser-canvas {
+  display: block;
+  outline: none;
+  cursor: default;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  box-shadow: 0 0 20px rgba(0,0,0,0.8);
+}
+
+/* オーバーレイ */
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(13, 13, 17, 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  z-index: 20;
+  transition: opacity 0.3s ease;
+}
+
+.overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.spinner {
+  width: 42px;
+  height: 42px;
+  border: 4px solid rgba(255, 255, 255, 0.1);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* フッター */
+.browser-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 16px;
+  background-color: var(--footer-bg);
+  border-top: 1px solid var(--toolbar-border);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tip-tag {
+  background: rgba(79, 128, 255, 0.2);
+  color: var(--accent-color);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: bold;
+}

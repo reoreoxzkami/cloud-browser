@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  cloud-browser:
+    build: .
+    container_name: ultra-light-cloud-browser
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    # 共有メモリサイズを拡張（ブラウザのタブクラッシュ防止）
+    shm_size: '1gb'
+    environment:
+      - PORT=3000
