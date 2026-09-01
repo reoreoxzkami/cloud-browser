@@ -30,58 +30,64 @@ function getChromeExecutablePath() {
 
 let browser = null;
 
-async function initBrowser() {
-  if (browser) return browser;
+async function getBrowser() {
+  if (browser && browser.connected) return browser;
   const executablePath = getChromeExecutablePath();
   if (!executablePath) {
-    console.error('Error: Chrome / Chromium executable not found on system.');
+    console.error('Chrome executable not found.');
     process.exit(1);
   }
-  console.log(`Starting headless Chrome using: ${executablePath}`);
+  console.log(`Starting ultra-light Chrome instance...`);
+  
+  // 超省メモリ・超低負荷 Chrome フラグ
   browser = await puppeteer.launch({
     executablePath,
     headless: 'new',
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
+      '--single-process',
       '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
       '--disable-gpu',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--autoplay-policy=no-user-gesture-required',
-      '--hide-scrollbars',
+      '--no-first-run',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-extensions',
+      '--disable-sync',
+      '--disable-translate',
       '--mute-audio',
       '--window-size=1280,720'
     ]
   });
+
+  browser.on('disconnected', () => {
+    browser = null;
+  });
+
   return browser;
 }
 
 wss.on('connection', async (ws) => {
-  console.log('Client connected to session');
+  console.log('Client connected.');
 
   let page = null;
   let cdp = null;
   let currentWidth = 1280;
   let currentHeight = 720;
-  let currentQuality = 60; // 動画向け軽量画質
+  let currentQuality = 50; // 超軽量・高速転送
   let isScreencasting = false;
 
-  let lastSentTime = 0;
-  const MIN_INTERVAL = 33; // 最大約30fps
+  let lastSent = 0;
+  const FRAME_INTERVAL = 45; // 最大約22fps (十分滑らかかつCPU負荷最小)
 
   try {
-    const b = await initBrowser();
+    const b = await getBrowser();
     page = await b.newPage();
     cdp = await page.createCDPSession();
 
     await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });
 
-    // Screencastフレーム受信ハンドラ
+    // Screencastフレーム受信
     cdp.on('Page.screencastFrame', async ({ data, sessionId, metadata }) => {
       try {
         await cdp.send('Page.screencastFrameAck', { sessionId });
@@ -90,10 +96,10 @@ wss.on('connection', async (ws) => {
       if (ws.readyState !== ws.OPEN) return;
 
       const now = performance.now();
-      // バックプレッシャー（未送信キューが溜まっている時は即ドロップ）
-      if (ws.bufferedAmount > 65536) return;
-      if (now - lastSentTime < MIN_INTERVAL) return;
-      lastSentTime = now;
+      // バックプレッシャー: 未送信バッファがある場合は即座に破棄
+      if (ws.bufferedAmount > 32768) return;
+      if (now - lastSent < FRAME_INTERVAL) return;
+      lastSent = now;
 
       ws.send(JSON.stringify({
         type: 'frame',
@@ -128,12 +134,14 @@ wss.on('connection', async (ws) => {
     };
 
     await startScreencast();
-    await page.goto('https://www.youtube.com', { waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+    
+    // 軽量な初期ページ (Google) に移動
+    await page.goto('https://www.google.com', { timeout: 10000 }).catch(() => {});
 
     ws.send(JSON.stringify({
       type: 'navigated',
       url: page.url(),
-      title: await page.title().catch(() => '')
+      title: await page.title().catch(() => 'Google')
     }));
 
     ws.on('message', async (message) => {
@@ -156,14 +164,12 @@ wss.on('connection', async (ws) => {
                   targetUrl = `https://www.google.com/search?q=${encodeURIComponent(targetUrl)}`;
                 }
               }
-              await page.goto(targetUrl, { timeout: 15000 }).catch(err => {
-                ws.send(JSON.stringify({ type: 'error', message: err.message }));
-              });
+              page.goto(targetUrl).catch(() => {});
             }
             break;
 
           case 'reload':
-            await page.reload().catch(() => {});
+            await cdp.send('Page.reload').catch(() => {});
             break;
 
           case 'back':
@@ -216,12 +222,12 @@ wss.on('connection', async (ws) => {
             break;
         }
       } catch (err) {
-        console.error('Error handling WS message:', err);
+        console.error('Error in WS message:', err);
       }
     });
 
     ws.on('close', async () => {
-      console.log('Client disconnected.');
+      console.log('Client closed.');
       try {
         if (cdp) await cdp.detach().catch(() => {});
         if (page) await page.close().catch(() => {});
@@ -229,26 +235,13 @@ wss.on('connection', async (ws) => {
     });
 
   } catch (err) {
-    console.error('Session initialization error:', err);
-    ws.send(JSON.stringify({ type: 'error', message: 'Failed to initialize browser session.' }));
+    console.error('Session init error:', err);
+    ws.send(JSON.stringify({ type: 'error', message: 'Failed to init browser session' }));
     ws.close();
   }
 });
 
 function startServer(port) {
-  async function cleanup() {
-    console.log('Shutting down and cleaning up browser processes...');
-    if (browser) {
-      try {
-        await browser.close();
-      } catch (e) {}
-    }
-    process.exit(0);
-  }
-
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
-
   server.listen(port, () => {
     console.log(`\n======================================================`);
     console.log(`  🚀 Ultra-Light Cloud Browser running on port ${port}`);
@@ -256,15 +249,5 @@ function startServer(port) {
     console.log(`======================================================\n`);
   });
 }
-
-server.on('error', (e) => {
-  if (e.code === 'EADDRINUSE') {
-    console.log(`Port ${PORT} is busy, trying port ${PORT + 1}...`);
-    PORT++;
-    startServer(PORT);
-  } else {
-    console.error('Server error:', e);
-  }
-});
 
 startServer(PORT);
