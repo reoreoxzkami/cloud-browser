@@ -3,6 +3,7 @@
   const canvas = document.getElementById('browser-canvas');
   const ctx = canvas.getContext('2d', { alpha: false });
   const viewportContainer = document.getElementById('viewport-container');
+  const imeInput = document.getElementById('ime-input');
   const overlay = document.getElementById('loading-overlay');
   const loadingText = document.getElementById('loading-text');
 
@@ -21,19 +22,20 @@
   // 内部状態
   let ws = null;
   let isConnected = false;
+  let isComposing = false; // 日本語IME変換中フラグ
 
   // FPS & Ping カウンタ
   let frameCount = 0;
   let lastFpsUpdate = performance.now();
   let currentFps = 0;
 
-  // 画像デコード再利用 (ゼロ遅延キュー)
+  // 高速画像描画 (初期の最速パイプライン)
   const renderImg = new Image();
   let isImageLoading = false;
   let pendingFrameData = null;
 
   renderImg.onload = () => {
-    // 解像度同期 (縦横比の崩れを防止)
+    // 解像度同期 (アスペクト比完全維持)
     if (canvas.width !== renderImg.naturalWidth || canvas.height !== renderImg.naturalHeight) {
       canvas.width = renderImg.naturalWidth;
       canvas.height = renderImg.naturalHeight;
@@ -44,7 +46,6 @@
     frameCount++;
     isImageLoading = false;
 
-    // 処理中に届いた最新フレームがあれば即座にロード
     if (pendingFrameData) {
       const next = pendingFrameData;
       pendingFrameData = null;
@@ -54,7 +55,6 @@
 
   function loadFrame(base64Data) {
     if (isImageLoading) {
-      // 描画中は最新の1枚だけ保持し、過去の未描画フレームはすべて破棄
       pendingFrameData = base64Data;
       return;
     }
@@ -169,7 +169,7 @@
     resizeTimeout = setTimeout(sendResize, 200);
   });
 
-  // 正確なアスペクト比を維持したマウス座標変換
+  // 座標変換ヘルパー
   function getCoordinates(e) {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -198,7 +198,7 @@
     return mod;
   }
 
-  // マウスイベント
+  // マウス操作
   let lastMouseMove = 0;
   canvas.addEventListener('mousemove', (e) => {
     const now = performance.now();
@@ -219,7 +219,12 @@
   });
 
   canvas.addEventListener('mousedown', (e) => {
-    canvas.focus();
+    // クリック時にIME入力用不可視テキストエリアにフォーカスを当てる
+    imeInput.focus();
+    // IMEのポップアップ位置をクリック位置に追従
+    imeInput.style.left = `${e.clientX}px`;
+    imeInput.style.top = `${e.clientY}px`;
+
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const { x, y } = getCoordinates(e);
 
@@ -268,40 +273,81 @@
     e.preventDefault();
   });
 
-  // キーボードイベント
-  canvas.addEventListener('keydown', (e) => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    if (['Tab', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
-      e.preventDefault();
+  // 日本語IME入力ハンドリング
+  function sendInsertText(text) {
+    if (text && ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'insertText',
+        text
+      }));
     }
+  }
 
-    const isChar = e.key.length === 1;
-
-    ws.send(JSON.stringify({
-      type: 'key',
-      keyType: isChar ? 'char' : 'rawKeyDown',
-      key: e.key,
-      code: e.code,
-      text: isChar ? e.key : undefined,
-      windowsVirtualKeyCode: e.keyCode,
-      nativeVirtualKeyCode: e.keyCode,
-      modifiers: getModifiers(e)
-    }));
+  imeInput.addEventListener('compositionstart', () => {
+    isComposing = true;
   });
 
-  canvas.addEventListener('keyup', (e) => {
+  imeInput.addEventListener('compositionend', (e) => {
+    isComposing = false;
+    if (e.data) {
+      sendInsertText(e.data);
+    }
+    imeInput.value = '';
+  });
+
+  imeInput.addEventListener('input', (e) => {
+    // IME変換中でなく直接文字が入力された場合 (半角英数やコピペ等)
+    if (!isComposing && e.data) {
+      sendInsertText(e.data);
+      imeInput.value = '';
+    }
+  });
+
+  // キーボードイベント (特殊キー: Enter, Backspace, Tab, 矢印キー等)
+  imeInput.addEventListener('keydown', (e) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    ws.send(JSON.stringify({
-      type: 'key',
-      keyType: 'keyUp',
-      key: e.key,
-      code: e.code,
-      windowsVirtualKeyCode: e.keyCode,
-      nativeVirtualKeyCode: e.keyCode,
-      modifiers: getModifiers(e)
-    }));
+    // IME変換中（漢字変換中）のキーはサーバーに生送信しない
+    if (isComposing || e.isComposing || e.keyCode === 229) {
+      return;
+    }
+
+    // 特殊制御キーの送信
+    const specialKeys = ['Enter', 'Backspace', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Delete', 'Home', 'End', 'PageUp', 'PageDown'];
+    
+    if (specialKeys.includes(e.code) || e.ctrlKey || e.metaKey || e.altKey) {
+      if (['Tab', 'Backspace'].includes(e.code)) {
+        e.preventDefault();
+      }
+
+      ws.send(JSON.stringify({
+        type: 'key',
+        keyType: 'rawKeyDown',
+        key: e.key,
+        code: e.code,
+        windowsVirtualKeyCode: e.keyCode,
+        nativeVirtualKeyCode: e.keyCode,
+        modifiers: getModifiers(e)
+      }));
+    }
+  });
+
+  imeInput.addEventListener('keyup', (e) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (isComposing || e.isComposing || e.keyCode === 229) return;
+
+    const specialKeys = ['Enter', 'Backspace', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Delete'];
+    if (specialKeys.includes(e.code) || e.ctrlKey || e.metaKey || e.altKey) {
+      ws.send(JSON.stringify({
+        type: 'key',
+        keyType: 'keyUp',
+        key: e.key,
+        code: e.code,
+        windowsVirtualKeyCode: e.keyCode,
+        nativeVirtualKeyCode: e.keyCode,
+        modifiers: getModifiers(e)
+      }));
+    }
   });
 
   // ツールバー操作
@@ -321,7 +367,7 @@
     const url = urlBar.value.trim();
     if (url && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'navigate', url }));
-      canvas.focus();
+      imeInput.focus();
     }
   }
 
@@ -332,7 +378,7 @@
     }
   });
 
-  // 画質調整スライダー
+  // 画質調整
   qualitySlider.addEventListener('input', (e) => {
     const val = parseInt(e.target.value, 10);
     qualityLabel.textContent = `${val}%`;

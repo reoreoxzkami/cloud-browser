@@ -191,11 +191,26 @@ body, html {
   display: block;
   outline: none;
   cursor: default;
-  /* 比率崩れを防止 */
+  /* アスペクト比を完璧に維持 */
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
   background-color: #ffffff;
+}
+
+/* 日本語IME不可視入力要素 */
+.ime-hidden-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  pointer-events: none;
+  z-index: 1;
 }
 
 /* オーバーレイ */

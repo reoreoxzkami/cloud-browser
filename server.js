@@ -34,12 +34,11 @@ async function getBrowser() {
   if (browser && browser.connected) return browser;
   const executablePath = getChromeExecutablePath();
   if (!executablePath) {
-    console.error('Chrome executable not found.');
+    console.error('Error: Chrome executable not found.');
     process.exit(1);
   }
-  console.log(`Starting ultra-light Chrome instance...`);
+  console.log(`Starting ultra-fast Chrome using: ${executablePath}`);
   
-  // 超省メモリ・超低負荷 Chrome フラグ
   browser = await puppeteer.launch({
     executablePath,
     headless: 'new',
@@ -56,7 +55,7 @@ async function getBrowser() {
       '--disable-sync',
       '--disable-translate',
       '--mute-audio',
-      '--window-size=1280,720'
+      '--window-size=1280,800'
     ]
   });
 
@@ -68,17 +67,14 @@ async function getBrowser() {
 }
 
 wss.on('connection', async (ws) => {
-  console.log('Client connected.');
+  console.log('Client connected to session');
 
   let page = null;
   let cdp = null;
   let currentWidth = 1280;
-  let currentHeight = 720;
-  let currentQuality = 50; // 超軽量・高速転送
+  let currentHeight = 800;
+  let currentQuality = 80;
   let isScreencasting = false;
-
-  let lastSent = 0;
-  const FRAME_INTERVAL = 45; // 最大約22fps (十分滑らかかつCPU負荷最小)
 
   try {
     const b = await getBrowser();
@@ -87,25 +83,19 @@ wss.on('connection', async (ws) => {
 
     await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });
 
-    // Screencastフレーム受信
+    // 初期バージョンの最速即時Screencast
     cdp.on('Page.screencastFrame', async ({ data, sessionId, metadata }) => {
       try {
         await cdp.send('Page.screencastFrameAck', { sessionId });
       } catch (e) {}
 
-      if (ws.readyState !== ws.OPEN) return;
-
-      const now = performance.now();
-      // バックプレッシャー: 未送信バッファがある場合は即座に破棄
-      if (ws.bufferedAmount > 32768) return;
-      if (now - lastSent < FRAME_INTERVAL) return;
-      lastSent = now;
-
-      ws.send(JSON.stringify({
-        type: 'frame',
-        data,
-        metadata
-      }));
+      if (ws.readyState === ws.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'frame',
+          data,
+          metadata
+        }));
+      }
     });
 
     page.on('framenavigated', (frame) => {
@@ -134,14 +124,12 @@ wss.on('connection', async (ws) => {
     };
 
     await startScreencast();
-    
-    // 軽量な初期ページ (Google) に移動
-    await page.goto('https://www.google.com', { timeout: 10000 }).catch(() => {});
+    page.goto('https://www.google.com').catch(() => {});
 
     ws.send(JSON.stringify({
       type: 'navigated',
-      url: page.url(),
-      title: await page.title().catch(() => 'Google')
+      url: 'https://www.google.com',
+      title: 'Google'
     }));
 
     ws.on('message', async (message) => {
@@ -169,15 +157,15 @@ wss.on('connection', async (ws) => {
             break;
 
           case 'reload':
-            await cdp.send('Page.reload').catch(() => {});
+            page.reload().catch(() => {});
             break;
 
           case 'back':
-            await page.goBack().catch(() => {});
+            page.goBack().catch(() => {});
             break;
 
           case 'forward':
-            await page.goForward().catch(() => {});
+            page.goForward().catch(() => {});
             break;
 
           case 'mouse':
@@ -206,8 +194,15 @@ wss.on('connection', async (ws) => {
             }).catch(() => {});
             break;
 
+          case 'insertText':
+            // ★ 日本語テキスト（漢字・ひらがな等）の直接挿入
+            if (msg.text) {
+              await cdp.send('Input.insertText', { text: msg.text }).catch(() => {});
+            }
+            break;
+
           case 'resize':
-            if (msg.width > 200 && msg.height > 200) {
+            if (msg.width > 100 && msg.height > 100) {
               currentWidth = Math.round(msg.width);
               currentHeight = Math.round(msg.height);
               await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });
@@ -227,7 +222,7 @@ wss.on('connection', async (ws) => {
     });
 
     ws.on('close', async () => {
-      console.log('Client closed.');
+      console.log('Client closed session.');
       try {
         if (cdp) await cdp.detach().catch(() => {});
         if (page) await page.close().catch(() => {});
@@ -235,7 +230,7 @@ wss.on('connection', async (ws) => {
     });
 
   } catch (err) {
-    console.error('Session init error:', err);
+    console.error('Session error:', err);
     ws.send(JSON.stringify({ type: 'error', message: 'Failed to init browser session' }));
     ws.close();
   }
