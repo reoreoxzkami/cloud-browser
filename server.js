@@ -42,7 +42,9 @@ async function initBrowser() {
     console.error('Error: Chrome / Chromium executable not found on system.');
     process.exit(1);
   }
-  console.log(`Starting headless Chrome using: ${executablePath}`);
+  console.log(`Starting optimized headless Chrome using: ${executablePath}`);
+  
+  // 高速かつ確実に動作するヘッドレスChrome起動フラグ
   browser = await puppeteer.launch({
     executablePath,
     headless: 'new',
@@ -50,13 +52,8 @@ async function initBrowser() {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
       '--disable-gpu',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
+      '--no-first-run',
       '--hide-scrollbars',
       '--mute-audio',
       '--window-size=1280,800'
@@ -66,13 +63,13 @@ async function initBrowser() {
 }
 
 wss.on('connection', async (ws) => {
-  console.log('Client connected to Remote Browser session');
+  console.log('Client connected to Ultra-Light Remote Browser session');
 
   let page = null;
   let cdp = null;
   let currentWidth = 1280;
   let currentHeight = 800;
-  let currentQuality = 80;
+  let currentQuality = 75; // 75%が帯域と画質のベストバランス
   let isScreencasting = false;
 
   try {
@@ -83,19 +80,21 @@ wss.on('connection', async (ws) => {
     await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });
     await page.goto('https://www.google.com', { waitUntil: 'domcontentloaded' }).catch(() => {});
 
-    // Screencastのフレーム受信ハンドラ
+    // Screencastフレーム受信ハンドラ (超高速バイナリ配信)
     cdp.on('Page.screencastFrame', async ({ data, sessionId, metadata }) => {
-      // 即時Ackを返して次のフレームのエンコードを許可
+      // 即座にAckを返信してChromeのパイプラインを滞らせない
       try {
         await cdp.send('Page.screencastFrameAck', { sessionId });
       } catch (e) {}
 
       if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'frame',
-          data, // base64 JPEG
-          metadata
-        }));
+        // Base64をBuffer (バイナリJPEG) に変換して直送
+        // ヘッダーとして 1バイトのメッセージタイプ (0x01: Frame) を付与
+        const imageBuffer = Buffer.from(data, 'base64');
+        const header = Buffer.alloc(1);
+        header.writeUInt8(1, 0); // 1 = Frame image
+        const packet = Buffer.concat([header, imageBuffer]);
+        ws.send(packet, { binary: true });
       }
     });
 
@@ -136,9 +135,11 @@ wss.on('connection', async (ws) => {
     }));
 
     // クライアントからの操作イベントの処理
-    ws.on('message', async (message) => {
+    ws.on('message', async (message, isBinary) => {
       try {
-        const msg = JSON.parse(message);
+        if (isBinary) return; // 現状クライアントからのバイナリはなし
+
+        const msg = JSON.parse(message.toString());
         if (!cdp || !page) return;
 
         switch (msg.type) {
@@ -150,7 +151,6 @@ wss.on('connection', async (ws) => {
             if (msg.url) {
               let targetUrl = msg.url.trim();
               if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-                // 検索クエリかURLかを判定
                 if (targetUrl.includes('.') && !targetUrl.includes(' ')) {
                   targetUrl = 'https://' + targetUrl;
                 } else {
@@ -176,12 +176,11 @@ wss.on('connection', async (ws) => {
             break;
 
           case 'mouse':
-            // CDP Input.dispatchMouseEvent
             await cdp.send('Input.dispatchMouseEvent', {
-              type: msg.mouseType, // mousePressed, mouseReleased, mouseMoved, mouseWheel
+              type: msg.mouseType,
               x: Math.round(msg.x),
               y: Math.round(msg.y),
-              button: msg.button || 'none', // none, left, middle, right
+              button: msg.button || 'none',
               buttons: msg.buttons || 0,
               clickCount: msg.clickCount || 0,
               deltaX: msg.deltaX || 0,
@@ -191,9 +190,8 @@ wss.on('connection', async (ws) => {
             break;
 
           case 'key':
-            // CDP Input.dispatchKeyEvent
             await cdp.send('Input.dispatchKeyEvent', {
-              type: msg.keyType, // rawKeyDown, keyUp, char
+              type: msg.keyType,
               key: msg.key,
               code: msg.code,
               text: msg.text,
@@ -204,7 +202,7 @@ wss.on('connection', async (ws) => {
             break;
 
           case 'resize':
-            if (msg.width > 100 && msg.height > 100) {
+            if (msg.width > 200 && msg.height > 200) {
               currentWidth = Math.round(msg.width);
               currentHeight = Math.round(msg.height);
               await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });
@@ -239,11 +237,18 @@ wss.on('connection', async (ws) => {
 });
 
 function startServer(port) {
-  server.listen(port, () => {
+  server.listen(port, async () => {
     console.log(`\n======================================================`);
     console.log(`  🚀 Ultra-Light Cloud Browser running on port ${port}`);
     console.log(`  🔗 Open: http://localhost:${port}`);
     console.log(`======================================================\n`);
+    // ブラウザを事前起動して初回接続を瞬時にする
+    try {
+      await initBrowser();
+      console.log('⚡ Chromium pre-warmed and ready for instant client connections!');
+    } catch (e) {
+      console.error('Failed to pre-warm browser:', e);
+    }
   });
 }
 

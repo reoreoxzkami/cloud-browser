@@ -1,14 +1,14 @@
 :root {
-  --bg-dark: #1e1e24;
-  --toolbar-bg: #2b2b36;
-  --toolbar-border: #3d3d4d;
-  --input-bg: #181820;
-  --input-text: #e0e0e0;
+  --bg-dark: #121216;
+  --toolbar-bg: #1e1e24;
+  --toolbar-border: #2e2e38;
+  --input-bg: #141419;
+  --input-text: #eaeaea;
   --accent-color: #4f80ff;
   --accent-hover: #3b6cd8;
   --status-good: #2ecc71;
   --text-muted: #8c8c9e;
-  --footer-bg: #1e1e24;
+  --footer-bg: #18181f;
 }
 
 * {
@@ -18,10 +18,10 @@
 }
 
 body, html {
-  width: 100%;
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
-  background-color: #0d0d11;
+  background-color: var(--bg-dark);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: #fff;
   user-select: none;
@@ -43,6 +43,7 @@ body, html {
   background-color: var(--toolbar-bg);
   border-bottom: 1px solid var(--toolbar-border);
   z-index: 10;
+  flex-shrink: 0;
 }
 
 .nav-controls {
@@ -138,7 +139,7 @@ body, html {
   gap: 6px;
   font-size: 12px;
   color: #aaa;
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.3);
   padding: 4px 8px;
   border-radius: 6px;
 }
@@ -173,24 +174,28 @@ body, html {
   color: #555;
 }
 
-/* メイン表示領域 */
+/* メイン表示領域 (Canvasコンテナ) */
 .viewport-container {
   flex: 1;
   position: relative;
-  background-color: #000;
+  background-color: #0b0b0e;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  width: 100%;
+  height: 100%;
 }
 
 #browser-canvas {
   display: block;
   outline: none;
   cursor: default;
-  image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
-  box-shadow: 0 0 20px rgba(0,0,0,0.8);
+  /* 比率崩れを防止 */
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  background-color: #ffffff;
 }
 
 /* オーバーレイ */
@@ -200,7 +205,7 @@ body, html {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(13, 13, 17, 0.9);
+  background: rgba(13, 13, 17, 0.92);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -238,6 +243,7 @@ body, html {
   border-top: 1px solid var(--toolbar-border);
   font-size: 11px;
   color: var(--text-muted);
+  flex-shrink: 0;
 }
 
 .footer-left {

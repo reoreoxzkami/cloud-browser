@@ -1,7 +1,7 @@
 (() => {
   // DOM 要素
   const canvas = document.getElementById('browser-canvas');
-  const ctx = canvas.getContext('2d', { alpha: false });
+  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
   const viewportContainer = document.getElementById('viewport-container');
   const overlay = document.getElementById('loading-overlay');
   const loadingText = document.getElementById('loading-text');
@@ -20,8 +20,6 @@
 
   // 内部状態
   let ws = null;
-  let serverWidth = 1280;
-  let serverHeight = 800;
   let isConnected = false;
 
   // FPS & Ping カウンタ
@@ -29,29 +27,29 @@
   let lastFpsUpdate = performance.now();
   let currentFps = 0;
 
-  // 画像デコード再利用用
-  const renderImg = new Image();
-  let isImageLoading = false;
-  let pendingFrameData = null;
+  // 高速レンダリング管理 (createImageBitmap + requestAnimationFrame)
+  let latestBitmap = null;
+  let isRenderPending = false;
 
-  renderImg.onload = () => {
-    ctx.drawImage(renderImg, 0, 0, canvas.width, canvas.height);
-    frameCount++;
-    isImageLoading = false;
-    if (pendingFrameData) {
-      const next = pendingFrameData;
-      pendingFrameData = null;
-      loadFrame(next);
+  function renderLoop() {
+    if (latestBitmap) {
+      // 受信した画像の解像度にCanvasの内部バッファを同期
+      if (canvas.width !== latestBitmap.width || canvas.height !== latestBitmap.height) {
+        canvas.width = latestBitmap.width;
+        canvas.height = latestBitmap.height;
+        resolutionText.textContent = `${latestBitmap.width} × ${latestBitmap.height}`;
+      }
+      ctx.drawImage(latestBitmap, 0, 0);
+      frameCount++;
     }
-  };
+    isRenderPending = false;
+  }
 
-  function loadFrame(base64Data) {
-    if (isImageLoading) {
-      pendingFrameData = base64Data;
-      return;
+  function scheduleRender() {
+    if (!isRenderPending) {
+      isRenderPending = true;
+      requestAnimationFrame(renderLoop);
     }
-    isImageLoading = true;
-    renderImg.src = 'data:image/jpeg;base64,' + base64Data;
   }
 
   // WebSocket 接続初期化
@@ -59,26 +57,45 @@
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
 
-    loadingText.textContent = 'クラウドブラウザに接続中...';
+    loadingText.textContent = '超軽量クラウドブラウザに接続中...';
     overlay.classList.remove('hidden');
 
     ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer'; // ゼロコピー高速バイナリモード
 
     ws.onopen = () => {
-      console.log('Connected to Cloud Browser WebSocket');
+      console.log('Connected to Ultra-Light Cloud Browser (Binary Streaming Mode)');
       isConnected = true;
       overlay.classList.add('hidden');
-      adjustCanvasSize();
+      sendResize();
     };
 
-    ws.onmessage = (event) => {
+    ws.onmessage = async (event) => {
       try {
+        // バイナリメッセージ (画像フレーム) の処理
+        if (event.data instanceof ArrayBuffer) {
+          const buffer = event.data;
+          const view = new DataView(buffer);
+          const type = view.getUint8(0);
+
+          if (type === 1) { // 0x01 = Frame Image (JPEG)
+            const imgData = new Uint8Array(buffer, 1);
+            const blob = new Blob([imgData], { type: 'image/jpeg' });
+            
+            // バックグラウンドスレッドでハードウェア並列デコード
+            const bitmap = await createImageBitmap(blob);
+            if (latestBitmap) {
+              latestBitmap.close(); // 旧Bitmapのメモリを即時解放
+            }
+            latestBitmap = bitmap;
+            scheduleRender();
+          }
+          return;
+        }
+
+        // テキスト/JSON メッセージの処理
         const msg = JSON.parse(event.data);
         switch (msg.type) {
-          case 'frame':
-            loadFrame(msg.data);
-            break;
-
           case 'navigated':
             if (msg.url && document.activeElement !== urlBar) {
               urlBar.value = msg.url;
@@ -91,9 +108,9 @@
           case 'pong':
             const rtt = Math.round(Date.now() - msg.timestamp);
             pingText.textContent = `${rtt} ms`;
-            if (rtt < 50) {
+            if (rtt < 40) {
               pingText.style.color = '#2ecc71';
-            } else if (rtt < 120) {
+            } else if (rtt < 100) {
               pingText.style.color = '#f39c12';
             } else {
               pingText.style.color = '#e74c3c';
@@ -105,7 +122,7 @@
             break;
         }
       } catch (err) {
-        console.error('Failed to parse WS message:', err);
+        console.error('Error handling WebSocket message:', err);
       }
     };
 
@@ -140,26 +157,18 @@
     }
   }, 1000);
 
-  // キャンバスサイズの調整とサーバー解像度同期
-  function adjustCanvasSize() {
-    const containerWidth = viewportContainer.clientWidth;
-    const containerHeight = viewportContainer.clientHeight;
+  // コンテナサイズに合わせてサーバーのViewportを同期
+  function sendResize() {
+    const width = viewportContainer.clientWidth;
+    const height = viewportContainer.clientHeight;
 
-    if (containerWidth <= 0 || containerHeight <= 0) return;
-
-    // 比率維持またはコンテナ一杯に合わせる
-    serverWidth = containerWidth;
-    serverHeight = containerHeight;
-
-    canvas.width = serverWidth;
-    canvas.height = serverHeight;
-    resolutionText.textContent = `${serverWidth} × ${serverHeight}`;
+    if (width <= 0 || height <= 0) return;
 
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'resize',
-        width: serverWidth,
-        height: serverHeight
+        width: Math.round(width),
+        height: Math.round(height)
       }));
     }
   }
@@ -167,21 +176,20 @@
   let resizeTimeout = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(adjustCanvasSize, 250);
+    resizeTimeout = setTimeout(sendResize, 200);
   });
 
-  // 座標変換ヘルパー
+  // 正確なアスペクト比を維持したマウス座標変換
   function getCoordinates(e) {
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     return {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY
+      x: Math.max(0, Math.min(canvas.width, (e.clientX - rect.left) * scaleX)),
+      y: Math.max(0, Math.min(canvas.height, (e.clientY - rect.top) * scaleY))
     };
   }
 
-  // ボタン変換 (0: left, 1: middle, 2: right)
   function getButtonName(buttonCode) {
     switch (buttonCode) {
       case 0: return 'left';
@@ -204,8 +212,7 @@
   let lastMouseMove = 0;
   canvas.addEventListener('mousemove', (e) => {
     const now = performance.now();
-    // 30〜60fps程度にthrottleして通信負荷を軽減
-    if (now - lastMouseMove < 16) return;
+    if (now - lastMouseMove < 16) return; // 60fpsに間引き
     lastMouseMove = now;
 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -268,14 +275,13 @@
   }, { passive: false });
 
   canvas.addEventListener('contextmenu', (e) => {
-    e.preventDefault(); // 右クリックメニューを無効化
+    e.preventDefault();
   });
 
   // キーボードイベント
   canvas.addEventListener('keydown', (e) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // ブラウザ固有のショートカット奪取防止（F5やTabなど）
     if (['Tab', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
       e.preventDefault();
     }
