@@ -1,7 +1,7 @@
 (() => {
   // DOM 要素
   const canvas = document.getElementById('browser-canvas');
-  const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+  const ctx = canvas.getContext('2d', { alpha: false });
   const viewportContainer = document.getElementById('viewport-container');
   const overlay = document.getElementById('loading-overlay');
   const loadingText = document.getElementById('loading-text');
@@ -27,29 +27,39 @@
   let lastFpsUpdate = performance.now();
   let currentFps = 0;
 
-  // 高速レンダリング管理 (createImageBitmap + requestAnimationFrame)
-  let latestBitmap = null;
-  let isRenderPending = false;
+  // 画像デコード再利用 (ゼロ遅延キュー)
+  const renderImg = new Image();
+  let isImageLoading = false;
+  let pendingFrameData = null;
 
-  function renderLoop() {
-    if (latestBitmap) {
-      // 受信した画像の解像度にCanvasの内部バッファを同期
-      if (canvas.width !== latestBitmap.width || canvas.height !== latestBitmap.height) {
-        canvas.width = latestBitmap.width;
-        canvas.height = latestBitmap.height;
-        resolutionText.textContent = `${latestBitmap.width} × ${latestBitmap.height}`;
-      }
-      ctx.drawImage(latestBitmap, 0, 0);
-      frameCount++;
+  renderImg.onload = () => {
+    // 解像度同期 (縦横比の崩れを防止)
+    if (canvas.width !== renderImg.naturalWidth || canvas.height !== renderImg.naturalHeight) {
+      canvas.width = renderImg.naturalWidth;
+      canvas.height = renderImg.naturalHeight;
+      resolutionText.textContent = `${renderImg.naturalWidth} × ${renderImg.naturalHeight}`;
     }
-    isRenderPending = false;
-  }
 
-  function scheduleRender() {
-    if (!isRenderPending) {
-      isRenderPending = true;
-      requestAnimationFrame(renderLoop);
+    ctx.drawImage(renderImg, 0, 0);
+    frameCount++;
+    isImageLoading = false;
+
+    // 処理中に届いた最新フレームがあれば即座にロード
+    if (pendingFrameData) {
+      const next = pendingFrameData;
+      pendingFrameData = null;
+      loadFrame(next);
     }
+  };
+
+  function loadFrame(base64Data) {
+    if (isImageLoading) {
+      // 描画中は最新の1枚だけ保持し、過去の未描画フレームはすべて破棄
+      pendingFrameData = base64Data;
+      return;
+    }
+    isImageLoading = true;
+    renderImg.src = 'data:image/jpeg;base64,' + base64Data;
   }
 
   // WebSocket 接続初期化
@@ -61,41 +71,22 @@
     overlay.classList.remove('hidden');
 
     ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer'; // ゼロコピー高速バイナリモード
 
     ws.onopen = () => {
-      console.log('Connected to Ultra-Light Cloud Browser (Binary Streaming Mode)');
+      console.log('Connected to Cloud Browser');
       isConnected = true;
       overlay.classList.add('hidden');
       sendResize();
     };
 
-    ws.onmessage = async (event) => {
+    ws.onmessage = (event) => {
       try {
-        // バイナリメッセージ (画像フレーム) の処理
-        if (event.data instanceof ArrayBuffer) {
-          const buffer = event.data;
-          const view = new DataView(buffer);
-          const type = view.getUint8(0);
-
-          if (type === 1) { // 0x01 = Frame Image (JPEG)
-            const imgData = new Uint8Array(buffer, 1);
-            const blob = new Blob([imgData], { type: 'image/jpeg' });
-            
-            // バックグラウンドスレッドでハードウェア並列デコード
-            const bitmap = await createImageBitmap(blob);
-            if (latestBitmap) {
-              latestBitmap.close(); // 旧Bitmapのメモリを即時解放
-            }
-            latestBitmap = bitmap;
-            scheduleRender();
-          }
-          return;
-        }
-
-        // テキスト/JSON メッセージの処理
         const msg = JSON.parse(event.data);
         switch (msg.type) {
+          case 'frame':
+            loadFrame(msg.data);
+            break;
+
           case 'navigated':
             if (msg.url && document.activeElement !== urlBar) {
               urlBar.value = msg.url;
@@ -140,13 +131,12 @@
     };
   }
 
-  // Ping 送信ループ (1秒毎)
+  // Ping 送信 & FPS 計算 (1秒毎)
   setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
     }
 
-    // FPS 計算
     const now = performance.now();
     const elapsed = (now - lastFpsUpdate) / 1000;
     if (elapsed >= 1.0) {
@@ -212,7 +202,7 @@
   let lastMouseMove = 0;
   canvas.addEventListener('mousemove', (e) => {
     const now = performance.now();
-    if (now - lastMouseMove < 16) return; // 60fpsに間引き
+    if (now - lastMouseMove < 16) return;
     lastMouseMove = now;
 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
