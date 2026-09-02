@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   cloud-browser:
     build: .
@@ -7,9 +5,22 @@ services:
     ports:
       - "3000:3000"
     restart: unless-stopped
-    # 共有メモリサイズを拡張（ブラウザのタブクラッシュ防止）
     shm_size: '1gb'
     environment:
       - PORT=3000
       - CHROME_PATH=/usr/bin/chromium
       - NODE_ENV=production
+
+  # Cloudflare Named Tunnel (24時間常時稼働用)
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflare-named-tunnel
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:-}
+    command: tunnel --no-autoupdate run
+    depends_on:
+      - cloud-browser
+    profiles:
+      - tunnel
