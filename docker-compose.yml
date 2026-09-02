@@ -11,3 +11,5 @@ services:
     shm_size: '1gb'
     environment:
       - PORT=3000
+      - CHROME_PATH=/usr/bin/chromium
+      - NODE_ENV=production

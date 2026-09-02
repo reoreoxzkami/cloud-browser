@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Audio Test Page</title>
+</head>
+<body style="background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;" onclick="startAudio()">
+  <h1 id="status">Audio Test Page</h1>
+  <p>Continuous WebAudio & HTML5 Audio Tone</p>
+  <button id="btn-play" style="padding:10px 20px;font-size:18px;cursor:pointer;" onclick="startAudio()">Play Audio</button>
+
+  <!-- HTML5 Audio Autoplay Fallback -->
+  <audio id="audio-elem" autoplay loop controls src="data:audio/wav;base64,UklGRjIAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA="></audio>
+
+  <script>
+    let ctx = null;
+    function startAudio() {
+      if (ctx) {
+        if (ctx.state === 'suspended') ctx.resume();
+        return;
+      }
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        ctx = new AudioCtx();
+        if (ctx.state === 'suspended') {
+          ctx.resume();
+        }
+        const osc = ctx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, ctx.currentTime);
+        osc.connect(ctx.destination);
+        osc.start();
+        document.getElementById('status').textContent = '🎵 Playing 440Hz Tone!';
+        document.body.style.background = '#1a3a1a';
+        console.log('AudioContext playing successfully!');
+      } catch (e) {
+        console.error('AudioContext error:', e);
+      }
+    }
+
+    // 即時実行
+    startAudio();
+    window.addEventListener('DOMContentLoaded', startAudio);
+    window.addEventListener('load', startAudio);
+    document.addEventListener('click', startAudio);
+    window.addEventListener('focus', startAudio);
+  </script>
+</body>
+</html>

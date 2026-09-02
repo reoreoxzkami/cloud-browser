@@ -21,7 +21,7 @@ body, html {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
-  background-color: var(--bg-dark);
+  background-color: #0b0b0e;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: #fff;
   user-select: none;
@@ -38,8 +38,8 @@ body, html {
 .browser-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: 10px;
+  padding: 6px 14px;
   background-color: var(--toolbar-bg);
   border-bottom: 1px solid var(--toolbar-border);
   z-index: 10;
@@ -49,7 +49,7 @@ body, html {
 .nav-controls {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .nav-controls button,
@@ -64,7 +64,7 @@ body, html {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 13px;
   transition: all 0.15s ease;
 }
 
@@ -74,22 +74,17 @@ body, html {
   color: #ffffff;
 }
 
-.nav-controls button:active,
-.action-controls button:active {
-  transform: scale(0.95);
-}
-
 /* アドレスバー */
 .address-bar-wrapper {
   flex: 1;
+  min-width: 200px;
   display: flex;
   align-items: center;
   background-color: var(--input-bg);
   border: 1px solid var(--toolbar-border);
   border-radius: 8px;
-  padding: 0 12px;
-  height: 36px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  padding: 0 10px;
+  height: 34px;
 }
 
 .address-bar-wrapper:focus-within {
@@ -98,9 +93,9 @@ body, html {
 }
 
 .ssl-icon {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--status-good);
-  margin-right: 8px;
+  margin-right: 6px;
 }
 
 #url-bar {
@@ -108,7 +103,7 @@ body, html {
   background: transparent;
   border: none;
   color: var(--input-text);
-  font-size: 14px;
+  font-size: 13px;
   outline: none;
   user-select: auto;
 }
@@ -119,25 +114,103 @@ body, html {
   color: var(--text-muted);
   cursor: pointer;
   padding: 4px;
-  transition: color 0.15s ease;
 }
 
 #btn-go:hover {
   color: var(--accent-color);
 }
 
+/* 日本語・かな入力バー */
+.ime-bar-wrapper {
+  width: 220px;
+  display: flex;
+  align-items: center;
+  background-color: rgba(79, 128, 255, 0.1);
+  border: 1px solid rgba(79, 128, 255, 0.3);
+  border-radius: 8px;
+  padding: 0 10px;
+  height: 34px;
+}
+
+.ime-bar-wrapper:focus-within {
+  border-color: var(--accent-color);
+  background-color: var(--input-bg);
+  box-shadow: 0 0 0 2px rgba(79, 128, 255, 0.25);
+}
+
+.ime-icon {
+  font-size: 12px;
+  color: var(--accent-color);
+  margin-right: 6px;
+}
+
+#ime-text-bar {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 13px;
+  outline: none;
+  user-select: auto;
+}
+
+#btn-ime-send {
+  background: transparent;
+  border: none;
+  color: var(--accent-color);
+  cursor: pointer;
+  padding: 4px;
+}
+
+#btn-ime-send:hover {
+  color: #ffffff;
+}
+
 /* アクションコントロール */
 .action-controls {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+}
+
+.audio-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.audio-control button {
+  background: transparent;
+  border: none;
+  color: #c5c5d2;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  transition: color 0.15s ease;
+}
+
+.audio-control button.muted {
+  color: #e74c3c;
+}
+
+.audio-control input[type="range"] {
+  width: 45px;
+  cursor: pointer;
+  accent-color: var(--accent-color);
 }
 
 .quality-control {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 11px;
   color: #aaa;
   background: rgba(0, 0, 0, 0.3);
   padding: 4px 8px;
@@ -145,7 +218,7 @@ body, html {
 }
 
 .quality-control input[type="range"] {
-  width: 60px;
+  width: 50px;
   cursor: pointer;
   accent-color: var(--accent-color);
 }
@@ -155,16 +228,16 @@ body, html {
   align-items: center;
   gap: 6px;
   background: rgba(0, 0, 0, 0.35);
-  padding: 4px 10px;
+  padding: 4px 8px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 11px;
   font-family: monospace;
   color: #d1d1e0;
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background-color: var(--status-good);
   box-shadow: 0 0 6px var(--status-good);
@@ -178,7 +251,7 @@ body, html {
 .viewport-container {
   flex: 1;
   position: relative;
-  background-color: #0b0b0e;
+  background-color: #000000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -191,11 +264,13 @@ body, html {
   display: block;
   outline: none;
   cursor: default;
-  /* アスペクト比を完璧に維持 */
+  /* 画面いっぱいに比率を保って最大化 */
+  width: 100%;
+  height: 100%;
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  background-color: #ffffff;
+  background-color: #121216;
 }
 
 /* 日本語IME不可視入力要素 */
@@ -253,7 +328,7 @@ body, html {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 16px;
+  padding: 4px 14px;
   background-color: var(--footer-bg);
   border-top: 1px solid var(--toolbar-border);
   font-size: 11px;

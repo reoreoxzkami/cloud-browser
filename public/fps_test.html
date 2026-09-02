@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { margin: 0; background: #0b0b0e; overflow: hidden; }
+canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c = document.getElementById('c');
+const ctx = c.getContext('2d');
+let w = c.width = window.innerWidth || 960;
+let h = c.height = window.innerHeight || 540;
+
+window.addEventListener('resize', () => {
+  w = c.width = window.innerWidth;
+  h = c.height = window.innerHeight;
+});
+
+let t = 0;
+function animate() {
+  t += 0.05;
+  ctx.fillStyle = 'rgba(10, 10, 18, 0.2)';
+  ctx.fillRect(0, 0, w, h);
+
+  // Rotating glowing circles
+  for (let i = 0; i < 5; i++) {
+    const angle = t + (i * Math.PI * 2 / 5);
+    const rad = 120 + Math.sin(t * 2 + i) * 40;
+    const x = w / 2 + Math.cos(angle) * rad;
+    const y = h / 2 + Math.sin(angle) * rad;
+    
+    ctx.beginPath();
+    ctx.arc(x, y, 30, 0, Math.PI * 2);
+    ctx.fillStyle = 'hsl(' + ((t * 40 + i * 60) % 360) + ', 100%, 60%)';
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = ctx.fillStyle;
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+
+  // Frame timestamp
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 20px monospace';
+  ctx.fillText('FPS Test Active: ' + Date.now(), 30, 40);
+
+  requestAnimationFrame(animate);
+}
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: ultra-light-cloud-browser
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: NODE_ENV
+        value: production
+    healthCheckPath: /
+    autoDeploy: true

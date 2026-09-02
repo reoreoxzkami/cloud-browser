@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 
-const ws = new WebSocket('ws://localhost:3333');
+const ws = new WebSocket('ws://localhost:3000');
 
 ws.on('open', () => {
   console.log('WS connection opened.');
@@ -10,16 +10,19 @@ ws.on('open', () => {
   }, 1500);
 });
 
-ws.on('message', (data) => {
-  const msg = JSON.parse(data);
-  if (msg.type === 'navigated') {
-    console.log('Page title/url changed:', msg.url, 'Title:', msg.title);
-    if (msg.url.includes('example.com')) {
-      console.log('SUCCESS: Navigation to example.com confirmed!');
-      ws.close();
-      process.exit(0);
+ws.on('message', (data, isBinary) => {
+  if (isBinary) return;
+  try {
+    const msg = JSON.parse(data.toString());
+    if (msg.type === 'navigated') {
+      console.log('Page title/url changed:', msg.url, 'Title:', msg.title);
+      if (msg.url.includes('example.com')) {
+        console.log('SUCCESS: Navigation to example.com confirmed!');
+        ws.close();
+        process.exit(0);
+      }
     }
-  }
+  } catch (e) {}
 });
 
 setTimeout(() => {

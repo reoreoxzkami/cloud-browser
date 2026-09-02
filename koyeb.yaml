@@ -1,0 +1,15 @@
+name: ultra-light-cloud-browser
+type: web
+instance_type: eco
+regions:
+  - fra
+ports:
+  - port: 3000
+    path: /
+    protocol: http
+routes:
+  - path: /
+    port: 3000
+env:
+  PORT: "3000"
+  NODE_ENV: "production"

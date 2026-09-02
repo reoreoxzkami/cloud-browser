@@ -1,15 +1,16 @@
 const WebSocket = require('ws');
 
-const ws = new WebSocket('ws://localhost:3333');
+const ws = new WebSocket('ws://localhost:3000');
 ws.binaryType = 'arraybuffer';
 
 ws.on('open', () => {
   console.log('Binary WS connection established.');
+  ws.send(JSON.stringify({ type: 'init', binary: true }));
 });
 
 let frames = 0;
 ws.on('message', (data, isBinary) => {
-  if (data instanceof Buffer || data instanceof ArrayBuffer) {
+  if (isBinary || data instanceof Buffer || data instanceof ArrayBuffer) {
     frames++;
     if (frames === 1) {
       console.log('Received raw binary frame! Byte length:', data.byteLength || data.length);
