@@ -133,6 +133,9 @@ async function initBrowser() {
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--no-first-run',
+        '--no-zygote',
+        '--renderer-process-limit=1',
+        '--js-flags=--max-old-space-size=256',
         '--autoplay-policy=no-user-gesture-required', // 動画・音声の自動再生を許可
         '--disable-web-security', // メディア音声へのダイレクトアクセスを許可
         '--allow-running-insecure-content',
@@ -143,7 +146,7 @@ async function initBrowser() {
         '--enable-gpu-rasterization',
         '--enable-zero-copy',
         '--ignore-gpu-blocklist',
-        '--num-raster-threads=4',
+        '--num-raster-threads=1',
         '--enable-accelerated-2d-canvas',
         '--enable-accelerated-video-decode',
         '--enable-threaded-compositing',
@@ -207,9 +210,9 @@ wss.on('connection', (ws) => {
 
   let page = null;
   let cdp = null;
-  let currentWidth = 854;
-  let currentHeight = 480;
-  let currentQuality = 32; // 32% 品質 & 480p で 60〜80+ FPS を完全維持
+  let currentWidth = 720;
+  let currentHeight = 405;
+  let currentQuality = 28; // 28% 品質 & 720x405 (または 640x360) で低スペッククラウドでも 50〜60+ FPS を実現
   let isScreencasting = false;
   let isBinaryMode = true;
   const pendingMessages = [];
@@ -311,9 +314,9 @@ wss.on('connection', (ws) => {
       case 'resize':
         if (msg.width >= 200 && msg.height >= 200) {
           const aspect = (msg.width || 16) / (msg.height || 9);
-          // 60FPS以上を維持するため、ストリーミング解像度を最大 854x480 に最適化クランプ
-          const MAX_W = 854;
-          const MAX_H = 480;
+          // クラウド環境で60FPSを維持するため最大解像度を 720x405 に最適化クランプ
+          const MAX_W = 720;
+          const MAX_H = 405;
           let targetWidth = Math.min(MAX_W, Math.max(320, Math.round(msg.width)));
           let targetHeight = Math.round(targetWidth / aspect);
           if (targetHeight > MAX_H) {
