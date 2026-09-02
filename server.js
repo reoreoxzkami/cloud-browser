@@ -5,7 +5,7 @@ const { WebSocketServer } = require('ws');
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 
-let PORT = parseInt(process.env.PORT, 10) || 3333;
+let PORT = parseInt(process.env.PORT, 10) || 3000;
 const app = express();
 const server = http.createServer(app);
 
@@ -68,8 +68,16 @@ audioWss.on('connection', (ws, req) => {
   } catch (e) {}
 });
 
+// ヘルスチェック用エンドポイント (Render / クラウド死活監視用)
+app.get('/healthz', (req, res) => res.status(200).send('OK'));
+
 // 静的ファイルの配信
 app.use(express.static(path.join(__dirname, 'public')));
+
+// SPA ルーティング (404 Not Found 防止)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
 // Chrome / Chromium 実行パスの自動検出
 function getChromeExecutablePath() {
@@ -577,10 +585,10 @@ wss.on('connection', (ws) => {
 
 // サーバー起動と事前ウォームアップ
 function startServer(port) {
-  server.listen(port, async () => {
+  server.listen(port, '0.0.0.0', async () => {
     console.log(`\n======================================================`);
     console.log(`  🚀 Ultra-Light Cloud Browser (60 FPS & Pure Audio) running on port ${port}`);
-    console.log(`  🔗 Open: http://localhost:${port}`);
+    console.log(`  🔗 Open: http://0.0.0.0:${port}`);
     console.log(`======================================================\n`);
 
     try {
