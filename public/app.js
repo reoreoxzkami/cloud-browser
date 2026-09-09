@@ -493,6 +493,7 @@
       x: rx,
       y: ry,
       button: 'none',
+      buttons: e.buttons || 0,
       modifiers: getModifiers(e)
     }));
   });
@@ -505,7 +506,7 @@
     if (imeHiddenInput) {
       imeHiddenInput.style.left = `${e.clientX}px`;
       imeHiddenInput.style.top = `${e.clientY}px`;
-      imeHiddenInput.focus();
+      imeHiddenInput.focus({ preventScroll: true });
     } else {
       canvas.focus();
     }
@@ -513,12 +514,16 @@
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const { x, y } = getCoordinates(e);
 
+    const btnName = getButtonName(e.button);
+    const buttons = e.buttons !== undefined ? e.buttons : (e.button === 2 ? 2 : (e.button === 1 ? 4 : 1));
+
     ws.send(JSON.stringify({
       type: 'mouse',
       mouseType: 'mousePressed',
       x: Math.round(x),
       y: Math.round(y),
-      button: getButtonName(e.button),
+      button: btnName,
+      buttons: buttons,
       clickCount: e.detail || 1,
       modifiers: getModifiers(e)
     }));
@@ -534,6 +539,7 @@
       x: Math.round(x),
       y: Math.round(y),
       button: getButtonName(e.button),
+      buttons: 0,
       modifiers: getModifiers(e)
     }));
   });

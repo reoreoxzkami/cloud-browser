@@ -124,7 +124,12 @@ class NgrokKeepAliveManager {
     this.intervalMs = (!isNaN(envInterval) && envInterval > 0)
       ? (envInterval < 1000 ? envInterval * 1000 : envInterval)
       : 5 * 60 * 1000;
-    this.domain = NGROK_DOMAIN;
+
+    // Render やクラウド環境のホスト名を自動検出
+    const renderHost = process.env.RENDER_EXTERNAL_HOSTNAME ||
+      (process.env.RENDER_EXTERNAL_URL ? new URL(process.env.RENDER_EXTERNAL_URL).hostname : null);
+    this.domain = renderHost || NGROK_DOMAIN;
+    this.protocol = (this.domain.includes('localhost') || this.domain.includes('127.0.0.1')) ? 'http:' : 'https:';
     this.timer = null;
     this.isRunning = false;
     this.lastPingTime = null;
@@ -143,13 +148,23 @@ class NgrokKeepAliveManager {
     this.browserVisitEnabled = process.env.KEEP_ALIVE_BROWSER_VISIT !== 'false';
   }
 
+  updateHost(host) {
+    if (!host) return;
+    const cleanHost = host.replace(/^https?:\/\//, '').split('/')[0];
+    if (cleanHost && cleanHost !== this.domain) {
+      this.domain = cleanHost;
+      this.protocol = (cleanHost.includes('localhost') || cleanHost.includes('127.0.0.1')) ? 'http:' : 'https:';
+      console.log(`[Keep-Alive] 🔄 監視対象ホストをアクセス元ホストに自動更新: ${this.protocol}//${this.domain}`);
+    }
+  }
+
   start() {
     if (this.isRunning) return;
     this.isRunning = true;
-    console.log(`[Keep-Alive] 🛡️ ngrok停止防止自動オープン機能を起動しました (間隔: ${Math.round(this.intervalMs / 1000)}秒)`);
-    console.log(`[Keep-Alive] 🎯 監視URL: https://${this.domain}`);
+    console.log(`[Keep-Alive] 🛡️ 停止防止自動オープン機能を起動しました (間隔: ${Math.round(this.intervalMs / 1000)}秒)`);
+    console.log(`[Keep-Alive] 🎯 監視URL: ${this.protocol}//${this.domain}/healthz`);
 
-    // 起動15秒後に最初の自動オープンを実行（トンネルの初期確立を待機）
+    // 起動15秒後に最初の自動オープンを実行（トンネル/サービスの初期確立を待機）
     setTimeout(() => {
       if (this.isRunning) {
         this.ping(false);
@@ -184,9 +199,9 @@ class NgrokKeepAliveManager {
     const startTime = Date.now();
     this.lastPingTime = startTime;
     this.stats.totalPings++;
-    const targetUrl = `https://${this.domain}/healthz`;
+    const targetUrl = `${this.protocol || 'https:'}//${this.domain}/healthz`;
 
-    console.log(`[Keep-Alive] [${new Date().toLocaleTimeString()}] 🔄 ngrokサイトへの定期自動アクセス実行中 (${isManual ? '手動' : '自動'}): ${targetUrl}`);
+    console.log(`[Keep-Alive] [${new Date().toLocaleTimeString()}] 🔄 停止防止定期自動アクセス実行中 (${isManual ? '手動' : '自動'}): ${targetUrl}`);
 
     try {
       const result = await this.performHttpPing(targetUrl);
@@ -206,7 +221,7 @@ class NgrokKeepAliveManager {
         method: 'HTTP'
       });
 
-      console.log(`[Keep-Alive] ✅ ngrokアクセス成功! HTTP ${result.statusCode} (${latency}ms) - 24時間停止防止シグナル送信完了`);
+      console.log(`[Keep-Alive] ✅ アクセス成功! HTTP ${result.statusCode} (${latency}ms) - 停止防止シグナル送信完了`);
 
       // ヘッドレスブラウザ (Chromium) での完全ページオープンも実行 (DOM構築/スクリプト実行)
       if (this.browserVisitEnabled && browser && browser.connected) {
@@ -232,12 +247,14 @@ class NgrokKeepAliveManager {
         method: 'HTTP'
       });
 
-      console.error(`[Keep-Alive] ⚠️ ngrokアクセス失敗 (${err.message}). トンネル停止を検知しました。自動復旧を試行します...`);
-      // トンネルの再起動・再接続を自動試行
-      try {
-        ensureNgrokTunnel();
-      } catch (tunnelErr) {
-        console.error('[Keep-Alive] トンネル復旧エラー:', tunnelErr.message);
+      console.error(`[Keep-Alive] ⚠️ アクセス失敗 (${err.message}). 対象: ${targetUrl}`);
+      // ngrok ドメインかつローカル環境の場合のみトンネル復旧を試行
+      if (this.domain.includes('ngrok') && !process.env.RENDER && !process.env.RENDER_EXTERNAL_HOSTNAME) {
+        try {
+          ensureNgrokTunnel();
+        } catch (tunnelErr) {
+          console.error('[Keep-Alive] トンネル復旧エラー:', tunnelErr.message);
+        }
       }
 
       return { success: false, error: err.message, latencyMs: latency };
@@ -247,9 +264,11 @@ class NgrokKeepAliveManager {
   performHttpPing(urlStr) {
     return new Promise((resolve, reject) => {
       const parsedUrl = new URL(urlStr);
-      const req = https.request({
+      const client = parsedUrl.protocol === 'http:' ? http : https;
+      const defaultPort = parsedUrl.protocol === 'http:' ? 80 : 443;
+      const req = client.request({
         hostname: parsedUrl.hostname,
-        port: parsedUrl.port || 443,
+        port: parsedUrl.port || defaultPort,
         path: parsedUrl.pathname + parsedUrl.search,
         method: 'GET',
         headers: {
@@ -351,6 +370,9 @@ const keepAliveManager = new NgrokKeepAliveManager();
 
 // Keep-Alive ステータス取得 API
 app.get('/api/keepalive', (req, res) => {
+  if (req.headers.host) {
+    keepAliveManager.updateHost(req.headers.host);
+  }
   res.json(keepAliveManager.getStatus());
 });
 
@@ -551,6 +573,10 @@ wss.on('connection', (ws) => {
     isStartingScreencast = true;
 
     try {
+      if (isScreencasting) {
+        await cdp.send('Page.stopScreencast').catch(() => {});
+        isScreencasting = false;
+      }
       await cdp.send('Page.startScreencast', {
         format: currentFormat,
         quality: currentQuality,
@@ -616,19 +642,36 @@ wss.on('connection', (ws) => {
         page.goForward({ timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
         break;
 
-      case 'mouse':
+      case 'mouse': {
+        const mouseType = msg.mouseType;
+        const button = msg.button || 'none';
+        let buttons = msg.buttons !== undefined ? msg.buttons : 0;
+        let clickCount = msg.clickCount || 0;
+
+        if (msg.buttons === undefined) {
+          if (mouseType === 'mousePressed') {
+            buttons = button === 'right' ? 2 : (button === 'middle' ? 4 : 1);
+            if (!clickCount) clickCount = 1;
+          } else if (mouseType === 'mouseReleased') {
+            buttons = 0;
+          } else if (mouseType === 'mouseMoved') {
+            buttons = msg.isDragging ? 1 : 0;
+          }
+        }
+
         cdp.send('Input.dispatchMouseEvent', {
-          type: msg.mouseType,
+          type: mouseType,
           x: Math.max(0, Math.round(msg.x || 0)),
           y: Math.max(0, Math.round(msg.y || 0)),
-          button: msg.button || 'none',
-          buttons: msg.buttons || 0,
-          clickCount: msg.clickCount || 0,
+          button,
+          buttons,
+          clickCount,
           deltaX: Math.round(msg.deltaX || 0),
           deltaY: Math.round(msg.deltaY || 0),
           modifiers: msg.modifiers || 0
         }).catch(() => {});
         break;
+      }
 
       case 'key':
         cdp.send('Input.dispatchKeyEvent', {

@@ -436,7 +436,7 @@ body, html {
   border: none;
   outline: none;
   background: transparent;
-  pointer-events: auto;
+  pointer-events: none;
   z-index: 10;
   resize: none;
   overflow: hidden;
