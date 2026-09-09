@@ -5,8 +5,9 @@
   const imeHiddenInput = document.getElementById('ime-hidden-input');
   const overlay = document.getElementById('loading-overlay');
   const loadingText = document.getElementById('loading-text');
+  const progressBar = document.getElementById('progress-bar');
 
-  // 初期キャンバスサイズの適用
+  // 初期キャンバスサイズ
   if (viewportContainer) {
     const initW = viewportContainer.clientWidth || 1024;
     const initH = viewportContainer.clientHeight || 576;
@@ -14,31 +15,73 @@
     canvas.height = Math.max(240, Math.round(initH));
   }
 
+  // ナビゲーション
   const btnBack = document.getElementById('btn-back');
   const btnForward = document.getElementById('btn-forward');
   const btnReload = document.getElementById('btn-reload');
+  const btnHome = document.getElementById('btn-home');
   const urlBar = document.getElementById('url-bar');
   const btnGo = document.getElementById('btn-go');
+  const btnPaste = document.getElementById('btn-paste');
+  const suggestBox = document.getElementById('suggest-box');
 
-  // 日本語・かな入力バー
+  // 日本語入力
   const imeTextBar = document.getElementById('ime-text-bar');
   const btnImeSend = document.getElementById('btn-ime-send');
 
-  // 音声コントロール
+  // プリセット & 画質
+  const presetButtons = document.querySelectorAll('.preset-btn');
+  const qualitySlider = document.getElementById('quality-slider');
+  const qualityLabel = document.getElementById('quality-label');
+
+  // 音声
   const btnAudioToggle = document.getElementById('btn-audio-toggle');
   const volumeSlider = document.getElementById('volume-slider');
 
-  const qualitySlider = document.getElementById('quality-slider');
-  const qualityLabel = document.getElementById('quality-label');
+  // ステータス & その他
   const pingText = document.getElementById('ping-text');
   const fpsText = document.getElementById('fps-text');
   const resolutionText = document.getElementById('resolution-text');
+  const formatBadge = document.getElementById('format-badge');
   const btnFullscreen = document.getElementById('btn-fullscreen');
 
   // 内部状態
   let ws = null;
   let isConnected = false;
-  let isComposing = false; // 日本語IME変換中フラグ
+  let isComposing = false;
+  let currentPreset = 'balanced';
+  let selectedSuggestIndex = -1;
+  let suggestList = [];
+
+  // ----------------------------------------------------
+  // プログレスバー制御
+  // ----------------------------------------------------
+  let progressTimer = null;
+  function startProgress() {
+    if (!progressBar) return;
+    clearInterval(progressTimer);
+    progressBar.classList.add('active');
+    progressBar.style.width = '15%';
+    let current = 15;
+    progressTimer = setInterval(() => {
+      if (current < 85) {
+        current += (85 - current) * 0.15;
+        progressBar.style.width = `${Math.round(current)}%`;
+      }
+    }, 150);
+  }
+
+  function finishProgress() {
+    if (!progressBar) return;
+    clearInterval(progressTimer);
+    progressBar.style.width = '100%';
+    setTimeout(() => {
+      progressBar.classList.remove('active');
+      setTimeout(() => {
+        progressBar.style.width = '0%';
+      }, 300);
+    }, 200);
+  }
 
   // ----------------------------------------------------
   // Web Audio リアルタイム PCM 音声再生エンジン
@@ -62,14 +105,12 @@
     if (!AudioContextClass) return;
 
     try {
-      // 端末のネイティブサンプリングレートで AudioContext を作成
       audioCtx = new AudioContextClass();
       audioGainNode = audioCtx.createGain();
       const vol = (volumeSlider ? parseInt(volumeSlider.value, 10) : 100) / 100;
       audioGainNode.gain.setValueAtTime(isAudioMuted ? 0 : vol, audioCtx.currentTime);
       audioGainNode.connect(audioCtx.destination);
       nextAudioTime = audioCtx.currentTime;
-      console.log(`🔊 Web Audio PCM Engine initialized (Hardware: ${audioCtx.sampleRate}Hz, Stream: ${SAMPLE_RATE}Hz)`);
       updateAudioUI();
     } catch (e) {
       console.warn('AudioContext initialization notice:', e);
@@ -93,7 +134,7 @@
     }
   }
 
-  const JITTER_BUFFER = 0.05; // 50ms の滑らかで音切れしないジッターバッファ
+  const JITTER_BUFFER = 0.05; // 50ms ジッターバッファ
 
   function playPcmRawBuffer(arrayBuffer) {
     if (!audioCtx) {
@@ -101,9 +142,7 @@
       if (!audioCtx) return;
     }
 
-    if (isAudioMuted) {
-      return;
-    }
+    if (isAudioMuted) return;
 
     if (audioCtx.state === 'suspended') {
       audioCtx.resume().then(updateAudioUI).catch(() => {});
@@ -116,7 +155,6 @@
     const numFrames = Math.floor(numSamples / CHANNELS);
     if (numFrames <= 0) return;
 
-    // Web Audio API は 44.1kHz のバッファをハードウェアレート (48kHz等) に自動リサンプリング
     const audioBuffer = audioCtx.createBuffer(CHANNELS, numFrames, SAMPLE_RATE);
     const leftChannel = audioBuffer.getChannelData(0);
     const rightChannel = audioBuffer.getChannelData(1);
@@ -132,8 +170,6 @@
     source.connect(audioGainNode);
 
     const currentTime = audioCtx.currentTime;
-
-    // 音切れ防止: 再生予定時刻が遅れている場合は 50ms 先に滑らかにスケジュール
     if (nextAudioTime < currentTime) {
       nextAudioTime = currentTime + JITTER_BUFFER;
     }
@@ -141,13 +177,11 @@
     source.start(nextAudioTime);
     nextAudioTime += audioBuffer.duration;
 
-    // ドリフト制御: バッファが過剰に蓄積した場合 (> 250ms) のみスムーズに同期
     if (nextAudioTime > currentTime + 0.25) {
       nextAudioTime = currentTime + JITTER_BUFFER;
     }
   }
 
-  // あらゆるユーザー操作で AudioContext を即座にアンロック
   function unlockAudio() {
     initAudio();
     if (audioCtx && audioCtx.state === 'suspended') {
@@ -159,15 +193,15 @@
     window.addEventListener(ev, unlockAudio, { passive: true });
   });
 
-  // 初期化試行
   initAudio();
 
   // FPS & Ping カウンタ
   let frameCount = 0;
   let lastFpsUpdate = performance.now();
   let currentFps = 0;
+  let lastActiveFps = 60;
 
-  // 高速かつ超安定・60fps ハードウェア並列デコード＆レンダリングエンジン
+  // 高速ハードウェアレンダリングエンジン
   let isDecoding = false;
   let pendingBlob = null;
 
@@ -243,32 +277,30 @@
     overlay.classList.remove('hidden');
 
     ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer'; // 高速バイナリ通信を有効化
+    ws.binaryType = 'arraybuffer';
 
     ws.onopen = () => {
       console.log('Connected to Cloud Browser (Audio + Video Binary Stream)');
       isConnected = true;
       overlay.classList.add('hidden');
 
-      // サーバーにバイナリ最適化モードを通知
-      ws.send(JSON.stringify({ type: 'init', binary: true }));
+      ws.send(JSON.stringify({ type: 'init', binary: true, format: 'jpeg' }));
       adjustCanvasSize();
     };
 
     ws.onmessage = async (event) => {
       try {
-        // バイナリパケット受信
         if (event.data instanceof ArrayBuffer) {
           const view = new Uint8Array(event.data);
           const packetType = view[0];
 
           if (packetType === 1) {
-            // 0x01: ビデオフレーム (JPEG)
+            // 0x01: ビデオフレーム
             const jpegBytes = new Uint8Array(event.data, 1);
             const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
             renderFrame(blob);
           } else if (packetType === 2) {
-            // 0x02: オーディオチャンク (PCM Int16 Stereo 44.1kHz)
+            // 0x02: オーディオチャンク
             if (!isAudioMuted) {
               playPcmRawBuffer(event.data);
             }
@@ -276,11 +308,9 @@
           return;
         }
 
-        // テキスト/JSON メッセージ受信
         const msg = JSON.parse(event.data);
         switch (msg.type) {
           case 'frame': {
-            // JSON 互換モードのフォールバック
             if (msg.data) {
               const byteCharacters = atob(msg.data);
               const byteNumbers = new Array(byteCharacters.length);
@@ -301,6 +331,15 @@
             if (msg.title) {
               document.title = `${msg.title} - Ultra-Light Cloud Browser`;
             }
+            finishProgress();
+            break;
+
+          case 'loading':
+            if (msg.loading) {
+              startProgress();
+            } else {
+              finishProgress();
+            }
             break;
 
           case 'pong': {
@@ -318,6 +357,7 @@
 
           case 'error':
             console.error('Server error:', msg.message);
+            finishProgress();
             break;
         }
       } catch (err) {
@@ -339,8 +379,7 @@
     };
   }
 
-  // Ping 送信 & FPS 計算 (0.5秒ごとにレスポンシブ更新)
-  let lastActiveFps = 60;
+  // Ping 送信 & FPS 計算
   setInterval(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
@@ -383,7 +422,6 @@
     resizeTimeout = setTimeout(adjustCanvasSize, 150);
   });
 
-  // タブ再フォーカス時の復帰
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       if (audioCtx && audioCtx.state === 'suspended') {
@@ -396,7 +434,7 @@
     }
   });
 
-  // マウス座標計算 (比率補正 & ゼロ除算ガード)
+  // マウス座標計算
   function getCoordinates(e) {
     const rect = canvas.getBoundingClientRect();
     if (!rect.width || !rect.height) {
@@ -428,14 +466,16 @@
     return mod;
   }
 
-  // マウスイベント (無駄なイベント送信の間引き・軽量化)
+  // ----------------------------------------------------
+  // マウスイベント & IME位置追従
+  // ----------------------------------------------------
   let lastMouseMoveTime = 0;
   let lastMouseX = -1;
   let lastMouseY = -1;
 
   canvas.addEventListener('mousemove', (e) => {
     const now = performance.now();
-    if (now - lastMouseMoveTime < 24) return; // 40Hz でマウス送信 (Blink の負荷を大幅削減)
+    if (now - lastMouseMoveTime < 24) return;
     lastMouseMoveTime = now;
 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -459,7 +499,12 @@
 
   canvas.addEventListener('mousedown', (e) => {
     unlockAudio();
+    hideSuggestBox();
+
+    // 🎯 クリック位置へ不可視IME入力要素を動的追従（ネイティブ変換候補を直下に表示）
     if (imeHiddenInput) {
+      imeHiddenInput.style.left = `${e.clientX}px`;
+      imeHiddenInput.style.top = `${e.clientY}px`;
       imeHiddenInput.focus();
     } else {
       canvas.focus();
@@ -493,7 +538,7 @@
     }));
   });
 
-  // スクロール (rAFフレーム集約による超滑らかな 60FPS スクロール)
+  // スクロール
   let wheelDeltaX = 0;
   let wheelDeltaY = 0;
   let wheelRafId = null;
@@ -544,20 +589,26 @@
     e.preventDefault();
   });
 
-  // タッチ操作サポート (スマホ・タブレット対応)
+  // タッチ操作 (スマホ・タブレット)
   let lastTouchX = 0;
   let lastTouchY = 0;
   let isTouchDragging = false;
 
   canvas.addEventListener('touchstart', (e) => {
     unlockAudio();
+    hideSuggestBox();
+
     if (e.touches.length === 1) {
       const touch = e.touches[0];
       lastTouchX = touch.clientX;
       lastTouchY = touch.clientY;
       isTouchDragging = false;
 
-      if (imeHiddenInput) imeHiddenInput.focus();
+      if (imeHiddenInput) {
+        imeHiddenInput.style.left = `${touch.clientX}px`;
+        imeHiddenInput.style.top = `${touch.clientY}px`;
+        imeHiddenInput.focus();
+      }
 
       const rect = canvas.getBoundingClientRect();
       const scaleX = canvas.width / rect.width;
@@ -629,14 +680,20 @@
   });
 
   // ----------------------------------------------------
-  // キーボード & 日本語 IME 入力処理 (二重入力防止設計)
+  // キーボード & 日本語 IME 入力
   // ----------------------------------------------------
-
   function handleKeydown(e) {
     unlockAudio();
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // IME変換中はキーイベントを直接送らない (確定時に insertText を送信)
+    // ショートカットキーの処理
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+      e.preventDefault();
+      urlBar.focus();
+      urlBar.select();
+      return;
+    }
+
     if (e.isComposing || isComposing) return;
 
     if (['Tab', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
@@ -675,7 +732,6 @@
   canvas.addEventListener('keydown', handleKeydown);
   canvas.addEventListener('keyup', handleKeyup);
 
-  // クリップボード貼り付けハンドラ
   const handlePaste = (e) => {
     e.preventDefault();
     const text = (e.clipboardData || window.clipboardData)?.getData('text');
@@ -688,7 +744,7 @@
   };
   canvas.addEventListener('paste', handlePaste);
 
-  // 不可視 IME 入力レイヤーによる Canvas 上の日本語直接入力
+  // 不可視 IME 入力レイヤー
   if (imeHiddenInput) {
     imeHiddenInput.addEventListener('compositionstart', () => {
       isComposing = true;
@@ -707,7 +763,6 @@
     });
 
     imeHiddenInput.addEventListener('input', (e) => {
-      // keydown 以外の入力（音声入力・予測変換確定など）のみ処理し二重入力を完全防止
       if (!isComposing && e.inputType && !['insertText', 'deleteContentBackward'].includes(e.inputType)) {
         const text = imeHiddenInput.value;
         if (text && ws && ws.readyState === WebSocket.OPEN) {
@@ -727,7 +782,7 @@
     imeHiddenInput.addEventListener('paste', handlePaste);
   }
 
-  // ツールバーの明示的日本語・かな送信
+  // ツールバーのかな送信
   function sendJapaneseToolbarText() {
     const text = imeTextBar.value;
     if (text && ws && ws.readyState === WebSocket.OPEN) {
@@ -746,6 +801,24 @@
       sendJapaneseToolbarText();
     }
   });
+
+  // クリップボード貼り付けボタン
+  if (btnPaste) {
+    btnPaste.addEventListener('click', async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'insertText',
+            text: text
+          }));
+          if (imeHiddenInput) imeHiddenInput.focus();
+        }
+      } catch (err) {
+        console.warn('Clipboard read error:', err);
+      }
+    });
+  }
 
   // 音声ミュート / 解除ボタン
   if (btnAudioToggle) {
@@ -766,11 +839,7 @@
       unlockAudio();
       const val = parseInt(e.target.value, 10);
       const vol = val / 100;
-      if (val === 0) {
-        isAudioMuted = true;
-      } else {
-        isAudioMuted = false;
-      }
+      isAudioMuted = (val === 0);
       if (audioGainNode && audioCtx) {
         audioGainNode.gain.setValueAtTime(isAudioMuted ? 0 : vol, audioCtx.currentTime);
       }
@@ -778,35 +847,182 @@
     });
   }
 
-  // ツールバーナビゲーション
+  // ----------------------------------------------------
+  // ナビゲーション & Google サジェスト
+  // ----------------------------------------------------
   btnBack.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'back' }));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      startProgress();
+      ws.send(JSON.stringify({ type: 'back' }));
+    }
   });
 
   btnForward.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'forward' }));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      startProgress();
+      ws.send(JSON.stringify({ type: 'forward' }));
+    }
   });
 
   btnReload.addEventListener('click', () => {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'reload' }));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      startProgress();
+      ws.send(JSON.stringify({ type: 'reload' }));
+    }
   });
 
-  function navigateToUrl() {
-    const url = urlBar.value.trim();
+  if (btnHome) {
+    btnHome.addEventListener('click', () => {
+      navigateToUrl('https://www.google.com');
+    });
+  }
+
+  function navigateToUrl(targetUrl) {
+    const url = (targetUrl || urlBar.value).trim();
     if (url && ws && ws.readyState === WebSocket.OPEN) {
+      startProgress();
+      hideSuggestBox();
       ws.send(JSON.stringify({ type: 'navigate', url }));
       if (imeHiddenInput) imeHiddenInput.focus();
     }
   }
 
-  btnGo.addEventListener('click', navigateToUrl);
+  btnGo.addEventListener('click', () => navigateToUrl());
+
+  // クイックアクセスリンク
+  document.querySelectorAll('.quick-link').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const url = btn.getAttribute('data-url');
+      if (url) {
+        urlBar.value = url;
+        navigateToUrl(url);
+      }
+    });
+  });
+
+  // Google サジェスト取得 & ドロップダウン表示
+  let suggestTimeout = null;
+
+  function hideSuggestBox() {
+    if (suggestBox) {
+      suggestBox.classList.add('hidden');
+      suggestBox.innerHTML = '';
+      selectedSuggestIndex = -1;
+    }
+  }
+
+  function renderSuggestList(items) {
+    if (!suggestBox) return;
+    suggestList = items;
+    selectedSuggestIndex = -1;
+
+    if (!items || items.length === 0) {
+      hideSuggestBox();
+      return;
+    }
+
+    suggestBox.innerHTML = '';
+    items.forEach((item, index) => {
+      const div = document.createElement('div');
+      div.className = 'suggest-item';
+      div.innerHTML = `<i class="fa-solid fa-magnifying-glass"></i> <span>${item}</span>`;
+      div.addEventListener('click', () => {
+        urlBar.value = item;
+        navigateToUrl(item);
+      });
+      suggestBox.appendChild(div);
+    });
+
+    suggestBox.classList.remove('hidden');
+  }
+
+  urlBar.addEventListener('input', () => {
+    clearTimeout(suggestTimeout);
+    const query = urlBar.value.trim();
+    if (!query || query.startsWith('http://') || query.startsWith('https://')) {
+      hideSuggestBox();
+      return;
+    }
+
+    suggestTimeout = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/suggest?q=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        renderSuggestList(data);
+      } catch (e) {
+        hideSuggestBox();
+      }
+    }, 150);
+  });
+
   urlBar.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
+      if (selectedSuggestIndex >= 0 && suggestList[selectedSuggestIndex]) {
+        urlBar.value = suggestList[selectedSuggestIndex];
+      }
       navigateToUrl();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (suggestList.length > 0) {
+        selectedSuggestIndex = (selectedSuggestIndex + 1) % suggestList.length;
+        updateSuggestSelection();
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (suggestList.length > 0) {
+        selectedSuggestIndex = (selectedSuggestIndex - 1 + suggestList.length) % suggestList.length;
+        updateSuggestSelection();
+      }
+    } else if (e.key === 'Escape') {
+      hideSuggestBox();
     }
   });
 
-  // 画質スライダー調整
+  function updateSuggestSelection() {
+    const items = suggestBox.querySelectorAll('.suggest-item');
+    items.forEach((it, idx) => {
+      if (idx === selectedSuggestIndex) {
+        it.classList.add('selected');
+        urlBar.value = suggestList[idx];
+      } else {
+        it.classList.remove('selected');
+      }
+    });
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!urlBar.contains(e.target) && !suggestBox.contains(e.target)) {
+      hideSuggestBox();
+    }
+  });
+
+  // ----------------------------------------------------
+  // 解像度プリセット & 画質コントロール
+  // ----------------------------------------------------
+  presetButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const preset = btn.getAttribute('data-preset');
+      presetButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentPreset = preset;
+
+      if (preset === 'eco') {
+        qualitySlider.value = 25;
+        qualityLabel.textContent = '25%';
+      } else if (preset === 'hd') {
+        qualitySlider.value = 60;
+        qualityLabel.textContent = '60%';
+      } else {
+        qualitySlider.value = 35;
+        qualityLabel.textContent = '35%';
+      }
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'setPreset', preset }));
+      }
+    });
+  });
+
   qualitySlider.addEventListener('input', (e) => {
     const val = parseInt(e.target.value, 10);
     qualityLabel.textContent = `${val}%`;
@@ -823,6 +1039,179 @@
       document.exitFullscreen().catch(() => {});
     }
   });
+
+  // ----------------------------------------------------
+  // ngrok 24時間停止防止・Keep-Alive フロントエンド管理
+  // ----------------------------------------------------
+  const btnKeepaliveModal = document.getElementById('btn-keepalive-modal');
+  const keepaliveStatusText = document.getElementById('keepalive-status-text');
+  const keepaliveModal = document.getElementById('keepalive-modal');
+  const keepaliveModalBackdrop = document.getElementById('keepalive-modal-backdrop');
+  const btnCloseKeepaliveModal = document.getElementById('btn-close-keepalive-modal');
+
+  const modalKeepaliveStatus = document.getElementById('modal-keepalive-status');
+  const modalKeepaliveUrl = document.getElementById('modal-keepalive-url');
+  const modalKeepaliveInterval = document.getElementById('modal-keepalive-interval');
+  const modalKeepaliveCountdown = document.getElementById('modal-keepalive-countdown');
+  const modalKeepaliveStats = document.getElementById('modal-keepalive-stats');
+  const modalKeepaliveBrowser = document.getElementById('modal-keepalive-browser');
+  const btnTriggerKeepalive = document.getElementById('btn-trigger-keepalive');
+  const btnOpenNgrokTab = document.getElementById('btn-open-ngrok-tab');
+  const keepaliveLogList = document.getElementById('keepalive-log-list');
+
+  let currentKeepaliveData = null;
+  let nextPingRemainingSec = 0;
+  let countdownTimer = null;
+
+  async function fetchKeepaliveStatus() {
+    try {
+      const res = await fetch('/api/keepalive');
+      if (!res.ok) return;
+      const data = await res.json();
+      currentKeepaliveData = data;
+      updateKeepaliveUI(data);
+    } catch (e) {
+      // ネットワーク切断中など
+    }
+  }
+
+  function updateKeepaliveUI(data) {
+    if (!data) return;
+
+    // ツールバーバッジ更新
+    if (keepaliveStatusText && btnKeepaliveModal) {
+      if (data.stats && data.stats.lastError && data.stats.failedPings > 0 && data.stats.lastStatusCode === 0) {
+        btnKeepaliveModal.classList.add('error');
+        keepaliveStatusText.textContent = `停止防止: 要確認 (${data.stats.lastError})`;
+      } else {
+        btnKeepaliveModal.classList.remove('error');
+        const intervalM = data.intervalMinutes || 5;
+        const total = data.stats ? data.stats.successPings : 0;
+        keepaliveStatusText.textContent = `停止防止: 稼働中 (${intervalM}分間隔 / 成功 ${total}回)`;
+      }
+    }
+
+    // モーダル更新
+    if (modalKeepaliveStatus) {
+      const isErr = data.stats && data.stats.lastError && data.stats.failedPings > 0 && data.stats.lastStatusCode === 0;
+      modalKeepaliveStatus.innerHTML = isErr
+        ? `<span style="color: #ef4444;">⚠️ 警告: ${escapeHtml(data.stats.lastError)} (自動再接続中)</span>`
+        : `<span style="color: #10b981;">🟢 24時間常時稼働中 (自動オープン稼働)</span>`;
+    }
+
+    if (modalKeepaliveUrl) {
+      modalKeepaliveUrl.textContent = data.targetUrl || `https://${data.domain}`;
+      modalKeepaliveUrl.href = data.targetUrl || `https://${data.domain}`;
+    }
+
+    if (btnOpenNgrokTab) {
+      btnOpenNgrokTab.href = data.targetUrl || `https://${data.domain}`;
+    }
+
+    if (modalKeepaliveInterval) {
+      modalKeepaliveInterval.textContent = `${data.intervalMinutes}分ごと (${data.intervalSeconds}秒)`;
+    }
+
+    if (modalKeepaliveStats && data.stats) {
+      const lat = data.stats.lastLatencyMs ? `${data.stats.lastLatencyMs}ms` : '--';
+      modalKeepaliveStats.textContent = `成功: ${data.stats.successPings}回 / 失敗: ${data.stats.failedPings}回 (最新遅延: ${lat})`;
+    }
+
+    if (modalKeepaliveBrowser) {
+      modalKeepaliveBrowser.textContent = data.browserVisitEnabled
+        ? `有効 (Chromium完全描画 / 累計訪問 ${data.stats ? data.stats.browserVisits : 0}回)`
+        : `無効 (超軽量HTTP Pingモード)`;
+    }
+
+    // カウントダウン更新
+    nextPingRemainingSec = data.nextPingInSec || 0;
+    renderCountdown();
+
+    // ログリスト更新
+    if (keepaliveLogList && data.stats && data.stats.history) {
+      if (data.stats.history.length === 0) {
+        keepaliveLogList.innerHTML = '<div class="log-empty">最初の自動オープンを待機中 (起動15秒後に実行)...</div>';
+      } else {
+        keepaliveLogList.innerHTML = data.stats.history.map(item => {
+          const timeStr = item.time ? new Date(item.time).toLocaleTimeString() : '';
+          const isSuccess = item.status === 'success';
+          const badgeClass = isSuccess ? 'success' : 'error';
+          const detail = isSuccess
+            ? `HTTP ${item.statusCode} (${item.latencyMs}ms) [${item.type || 'auto'}]`
+            : `エラー: ${item.error || '通信遮断'} (${item.latencyMs}ms)`;
+          return `<div class="log-item ${badgeClass}"><span>[${timeStr}] ${detail}</span><span>${isSuccess ? '✅' : '⚠️'}</span></div>`;
+        }).join('');
+      }
+    }
+  }
+
+  function renderCountdown() {
+    if (!modalKeepaliveCountdown) return;
+    if (nextPingRemainingSec <= 0) {
+      modalKeepaliveCountdown.textContent = 'アクセス実行中...';
+    } else {
+      const m = Math.floor(nextPingRemainingSec / 60);
+      const s = nextPingRemainingSec % 60;
+      modalKeepaliveCountdown.textContent = m > 0 ? `${m}分 ${s}秒後` : `${s}秒後`;
+    }
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // 1秒ごとのカウントダウン減算
+  countdownTimer = setInterval(() => {
+    if (nextPingRemainingSec > 0) {
+      nextPingRemainingSec--;
+      renderCountdown();
+    }
+  }, 1000);
+
+  // モーダルイベント
+  if (btnKeepaliveModal) {
+    btnKeepaliveModal.addEventListener('click', () => {
+      fetchKeepaliveStatus();
+      if (keepaliveModal) keepaliveModal.classList.remove('hidden');
+    });
+  }
+
+  function closeKeepaliveModal() {
+    if (keepaliveModal) keepaliveModal.classList.add('hidden');
+  }
+
+  if (btnCloseKeepaliveModal) {
+    btnCloseKeepaliveModal.addEventListener('click', closeKeepaliveModal);
+  }
+  if (keepaliveModalBackdrop) {
+    keepaliveModalBackdrop.addEventListener('click', closeKeepaliveModal);
+  }
+
+  // 手動今すぐアクセスボタン
+  if (btnTriggerKeepalive) {
+    btnTriggerKeepalive.addEventListener('click', async () => {
+      btnTriggerKeepalive.disabled = true;
+      btnTriggerKeepalive.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> ngrok サイトにアクセス中...';
+      try {
+        const res = await fetch('/api/keepalive/trigger', { method: 'POST' });
+        const data = await res.json();
+        if (data.status) {
+          currentKeepaliveData = data.status;
+          updateKeepaliveUI(data.status);
+        }
+      } catch (err) {
+        console.error('Trigger keepalive error:', err);
+      } finally {
+        btnTriggerKeepalive.disabled = false;
+        btnTriggerKeepalive.innerHTML = '<i class="fa-solid fa-rotate"></i> 今すぐ ngrok サイトを開いてPing';
+      }
+    });
+  }
+
+  // 定期ステータスポーリング (12秒ごと)
+  setInterval(fetchKeepaliveStatus, 12000);
+  fetchKeepaliveStatus();
 
   // 起動
   connect();

@@ -1,12 +1,16 @@
 const express = require('express');
 const http = require('http');
+const https = require('https');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const puppeteer = require('puppeteer-core');
 const fs = require('fs');
+const { spawn, exec } = require('child_process');
 
 let PORT = parseInt(process.env.PORT, 10) || 3000;
+const NGROK_DOMAIN = process.env.NGROK_DOMAIN || 'judgingly-prize-chili.ngrok-free.dev';
 const app = express();
+app.use(express.json());
 const server = http.createServer(app);
 
 // クライアント用 WebSocket サーバーと専用バイナリ音声パイプ用 WebSocket サーバー
@@ -68,8 +72,326 @@ audioWss.on('connection', (ws, req) => {
   } catch (e) {}
 });
 
-// ヘルスチェック用エンドポイント (Render / クラウド死活監視用)
+// 広告・トラッカー遮断リスト (AdBlocker)
+const BLOCKED_URL_PATTERNS = [
+  '*doubleclick.net*',
+  '*googleadservices.com*',
+  '*googlesyndication.com*',
+  '*adservice.google.*',
+  '*youtube.com/api/stats/ads*',
+  '*youtube.com/pagead/*',
+  '*adnxs.com*',
+  '*criteo.com*',
+  '*criteo.net*',
+  '*scorecardresearch.com*',
+  '*amazon-adsystem.com*',
+  '*taboola.com*',
+  '*outbrain.com*',
+  '*popads.net*',
+  '*adroll.com*',
+  '*rubiconproject.com*',
+  '*pubmatic.com*',
+  '*openx.net*',
+  '*casalemedia.com*',
+  '*smartadserver.com*',
+  '*advertising.com*',
+  '*adcolony.com*',
+  '*unityads.unity3d.com*',
+  '*applovin.com*',
+  '*vungle.com*',
+  '*flurry.com*',
+  '*chartboost.com*',
+  '*admob.com*',
+  '*quantserve.com*',
+  '*adtech.de*',
+  '*adsafeprotected.com*',
+  '*moatads.com*',
+  '*exponential.com*',
+  '*yieldmo.com*',
+  '*teads.tv*'
+];
+
+// ヘルスチェック用エンドポイント
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
+
+// ==============================================================================
+// ngrok 24時間停止防止・定期自動オープン＆死活監視マネージャー (Keep-Alive Engine)
+// ==============================================================================
+class NgrokKeepAliveManager {
+  constructor() {
+    // デフォルト5分 (Render / Koyeb の15分スリープ制限を確実に回避)
+    const envInterval = parseInt(process.env.KEEP_ALIVE_INTERVAL, 10);
+    this.intervalMs = (!isNaN(envInterval) && envInterval > 0)
+      ? (envInterval < 1000 ? envInterval * 1000 : envInterval)
+      : 5 * 60 * 1000;
+    this.domain = NGROK_DOMAIN;
+    this.timer = null;
+    this.isRunning = false;
+    this.lastPingTime = null;
+    this.nextPingTime = null;
+    this.stats = {
+      totalPings: 0,
+      successPings: 0,
+      failedPings: 0,
+      lastStatusCode: null,
+      lastLatencyMs: 0,
+      lastError: null,
+      lastSuccessTime: null,
+      browserVisits: 0,
+      history: []
+    };
+    this.browserVisitEnabled = process.env.KEEP_ALIVE_BROWSER_VISIT !== 'false';
+  }
+
+  start() {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    console.log(`[Keep-Alive] 🛡️ ngrok停止防止自動オープン機能を起動しました (間隔: ${Math.round(this.intervalMs / 1000)}秒)`);
+    console.log(`[Keep-Alive] 🎯 監視URL: https://${this.domain}`);
+
+    // 起動15秒後に最初の自動オープンを実行（トンネルの初期確立を待機）
+    setTimeout(() => {
+      if (this.isRunning) {
+        this.ping(false);
+      }
+    }, 15000);
+
+    this.scheduleNext();
+  }
+
+  stop() {
+    this.isRunning = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    console.log(`[Keep-Alive] 🛑 ngrok停止防止機能を停止しました。`);
+  }
+
+  scheduleNext() {
+    if (this.timer) clearTimeout(this.timer);
+    if (!this.isRunning) return;
+    this.nextPingTime = Date.now() + this.intervalMs;
+    this.timer = setTimeout(async () => {
+      if (this.isRunning) {
+        await this.ping(false);
+        this.scheduleNext();
+      }
+    }, this.intervalMs);
+  }
+
+  async ping(isManual = false) {
+    const startTime = Date.now();
+    this.lastPingTime = startTime;
+    this.stats.totalPings++;
+    const targetUrl = `https://${this.domain}/healthz`;
+
+    console.log(`[Keep-Alive] [${new Date().toLocaleTimeString()}] 🔄 ngrokサイトへの定期自動アクセス実行中 (${isManual ? '手動' : '自動'}): ${targetUrl}`);
+
+    try {
+      const result = await this.performHttpPing(targetUrl);
+      const latency = Date.now() - startTime;
+      this.stats.successPings++;
+      this.stats.lastStatusCode = result.statusCode;
+      this.stats.lastLatencyMs = latency;
+      this.stats.lastError = null;
+      this.stats.lastSuccessTime = new Date().toISOString();
+
+      this.addHistory({
+        time: new Date().toISOString(),
+        status: 'success',
+        statusCode: result.statusCode,
+        latencyMs: latency,
+        type: isManual ? 'manual' : 'auto',
+        method: 'HTTP'
+      });
+
+      console.log(`[Keep-Alive] ✅ ngrokアクセス成功! HTTP ${result.statusCode} (${latency}ms) - 24時間停止防止シグナル送信完了`);
+
+      // ヘッドレスブラウザ (Chromium) での完全ページオープンも実行 (DOM構築/スクリプト実行)
+      if (this.browserVisitEnabled && browser && browser.connected) {
+        this.visitWithBrowser().catch(err => {
+          console.log('[Keep-Alive] ブラウザ訪問ログ:', err.message);
+        });
+      }
+
+      return { success: true, statusCode: result.statusCode, latencyMs: latency };
+    } catch (err) {
+      const latency = Date.now() - startTime;
+      this.stats.failedPings++;
+      this.stats.lastStatusCode = 0;
+      this.stats.lastLatencyMs = latency;
+      this.stats.lastError = err.message;
+
+      this.addHistory({
+        time: new Date().toISOString(),
+        status: 'error',
+        error: err.message,
+        latencyMs: latency,
+        type: isManual ? 'manual' : 'auto',
+        method: 'HTTP'
+      });
+
+      console.error(`[Keep-Alive] ⚠️ ngrokアクセス失敗 (${err.message}). トンネル停止を検知しました。自動復旧を試行します...`);
+      // トンネルの再起動・再接続を自動試行
+      try {
+        ensureNgrokTunnel();
+      } catch (tunnelErr) {
+        console.error('[Keep-Alive] トンネル復旧エラー:', tunnelErr.message);
+      }
+
+      return { success: false, error: err.message, latencyMs: latency };
+    }
+  }
+
+  performHttpPing(urlStr) {
+    return new Promise((resolve, reject) => {
+      const parsedUrl = new URL(urlStr);
+      const req = https.request({
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.port || 443,
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'GET',
+        headers: {
+          'ngrok-skip-browser-warning': '69420',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 CloudBrowser-KeepAlive/2.0',
+          'Accept': 'text/html,application/json,*/*',
+          'Cache-Control': 'no-cache'
+        },
+        timeout: 12000
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => { body += chunk; });
+        res.on('end', () => {
+          if (res.statusCode >= 200 && res.statusCode < 400) {
+            resolve({ statusCode: res.statusCode, body });
+          } else {
+            reject(new Error(`HTTP Status ${res.statusCode}`));
+          }
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy(new Error('Request timed out (12s)'));
+      });
+
+      req.on('error', (err) => {
+        reject(err);
+      });
+
+      req.end();
+    });
+  }
+
+  // ヘッドレス Chromium インスタンスで ngrok サイトを実際に開く (完全なアクセスシミュレーション)
+  async visitWithBrowser() {
+    if (!browser || !browser.connected) return;
+    let bgPage = null;
+    try {
+      console.log(`[Keep-Alive] 🌐 ヘッドレスブラウザで ngrok サイトを開いています: https://${this.domain}`);
+      bgPage = await browser.newPage();
+      await bgPage.setExtraHTTPHeaders({
+        'ngrok-skip-browser-warning': '69420'
+      });
+      await bgPage.goto(`https://${this.domain}/healthz`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 15000
+      });
+      this.stats.browserVisits++;
+      console.log(`[Keep-Alive] 🌐 ブラウザでのロード完了 (累計訪問回数: ${this.stats.browserVisits}回)`);
+    } catch (e) {
+      console.log(`[Keep-Alive] ブラウザ訪問ログ:`, e.message);
+    } finally {
+      if (bgPage) {
+        try { await bgPage.close(); } catch (e) {}
+      }
+    }
+  }
+
+  addHistory(entry) {
+    this.stats.history.unshift(entry);
+    if (this.stats.history.length > 10) {
+      this.stats.history.pop();
+    }
+  }
+
+  getStatus() {
+    const now = Date.now();
+    const remainingSec = this.nextPingTime ? Math.max(0, Math.round((this.nextPingTime - now) / 1000)) : 0;
+    return {
+      isRunning: this.isRunning,
+      domain: this.domain,
+      targetUrl: `https://${this.domain}`,
+      intervalMs: this.intervalMs,
+      intervalSeconds: Math.round(this.intervalMs / 1000),
+      intervalMinutes: +(this.intervalMs / 60000).toFixed(1),
+      lastPingTime: this.lastPingTime ? new Date(this.lastPingTime).toISOString() : null,
+      nextPingTime: this.nextPingTime ? new Date(this.nextPingTime).toISOString() : null,
+      nextPingInSec: remainingSec,
+      browserVisitEnabled: this.browserVisitEnabled,
+      stats: this.stats
+    };
+  }
+
+  setConfig({ intervalSeconds, browserVisitEnabled }) {
+    if (intervalSeconds && !isNaN(intervalSeconds) && intervalSeconds >= 10) {
+      this.intervalMs = intervalSeconds * 1000;
+      console.log(`[Keep-Alive] ⚙️ 監視間隔を ${intervalSeconds} 秒に変更しました。`);
+      this.scheduleNext();
+    }
+    if (typeof browserVisitEnabled === 'boolean') {
+      this.browserVisitEnabled = browserVisitEnabled;
+      console.log(`[Keep-Alive] ⚙️ ブラウザ自動訪問を ${browserVisitEnabled ? '有効' : '無効'} に設定しました。`);
+    }
+    return this.getStatus();
+  }
+}
+
+const keepAliveManager = new NgrokKeepAliveManager();
+
+// Keep-Alive ステータス取得 API
+app.get('/api/keepalive', (req, res) => {
+  res.json(keepAliveManager.getStatus());
+});
+
+// 手動 Keep-Alive トリガー API (今すぐ開いて停止防止)
+app.post('/api/keepalive/trigger', async (req, res) => {
+  const result = await keepAliveManager.ping(true);
+  res.json({
+    message: result.success ? 'Keep-Alive ping successful' : 'Keep-Alive ping failed',
+    result,
+    status: keepAliveManager.getStatus()
+  });
+});
+
+// Keep-Alive 設定更新 API
+app.post('/api/keepalive/config', (req, res) => {
+  const { intervalSeconds, browserVisitEnabled } = req.body || {};
+  const status = keepAliveManager.setConfig({ intervalSeconds, browserVisitEnabled });
+  res.json({ message: 'Keep-Alive configuration updated', status });
+});
+
+// Google サジェストプロキシ API
+app.get('/api/suggest', (req, res) => {
+  const query = req.query.q || '';
+  if (!query) return res.json([]);
+  const suggestUrl = `https://suggestqueries.google.com/complete/search?client=chrome&q=${encodeURIComponent(query)}`;
+  
+  https.get(suggestUrl, (googleRes) => {
+    let raw = '';
+    googleRes.on('data', chunk => { raw += chunk; });
+    googleRes.on('end', () => {
+      try {
+        const parsed = JSON.parse(raw);
+        res.json(parsed[1] || []);
+      } catch (e) {
+        res.json([]);
+      }
+    });
+  }).on('error', () => {
+    res.json([]);
+  });
+});
 
 // 静的ファイルの配信
 app.use(express.static(path.join(__dirname, 'public')));
@@ -134,19 +456,19 @@ async function initBrowser() {
         '--disable-dev-shm-usage',
         '--no-first-run',
         '--no-zygote',
-        '--renderer-process-limit=1',
-        '--js-flags=--max-old-space-size=256',
-        '--autoplay-policy=no-user-gesture-required', // 動画・音声の自動再生を許可
-        '--disable-web-security', // メディア音声へのダイレクトアクセスを許可
+        '--renderer-process-limit=2',
+        '--js-flags=--max-old-space-size=512',
+        '--autoplay-policy=no-user-gesture-required',
+        '--disable-web-security',
         '--allow-running-insecure-content',
-        '--disable-blink-features=AutomationControlled', // YouTube等の自動化検知による動画停止を防止
-        '--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', // YouTubeの403ブロック防止
-        '--disable-gpu-vsync', // フレームレート制限解除
+        '--disable-blink-features=AutomationControlled',
+        '--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        '--disable-gpu-vsync',
         '--disable-frame-rate-limit',
         '--enable-gpu-rasterization',
         '--enable-zero-copy',
         '--ignore-gpu-blocklist',
-        '--num-raster-threads=1',
+        '--num-raster-threads=2',
         '--enable-accelerated-2d-canvas',
         '--enable-accelerated-video-decode',
         '--enable-threaded-compositing',
@@ -210,23 +532,27 @@ wss.on('connection', (ws) => {
 
   let page = null;
   let cdp = null;
-  let currentWidth = 720;
-  let currentHeight = 405;
-  let currentQuality = 28; // 28% 品質 & 720x405 (または 640x360) で低スペッククラウドでも 50〜60+ FPS を実現
+  let currentWidth = 1024;
+  let currentHeight = 576;
+  let currentQuality = 35;
+  let currentFormat = 'jpeg'; // 'jpeg' or 'webp'
+  let currentPreset = 'balanced'; // 'eco', 'balanced', 'hd'
   let isScreencasting = false;
   let isBinaryMode = true;
   const pendingMessages = [];
   let isReady = false;
   let isStartingScreencast = false;
-  const startScreencast = async (quality = currentQuality) => {
+
+  const startScreencast = async (quality = currentQuality, format = currentFormat) => {
     currentQuality = quality;
+    currentFormat = format;
     if (!cdp) return;
     if (isStartingScreencast) return;
     isStartingScreencast = true;
 
     try {
       await cdp.send('Page.startScreencast', {
-        format: 'jpeg',
+        format: currentFormat,
         quality: currentQuality,
         maxWidth: currentWidth,
         maxHeight: currentHeight,
@@ -262,20 +588,32 @@ wss.on('connection', (ws) => {
               targetUrl = `https://www.google.com/search?q=${encodeURIComponent(targetUrl)}`;
             }
           }
-          page.goto(targetUrl, { timeout: 20000, waitUntil: 'domcontentloaded' }).catch(() => {});
+          if (ws.readyState === ws.OPEN) {
+            ws.send(JSON.stringify({ type: 'loading', loading: true }));
+          }
+          page.goto(targetUrl, { timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
         }
         break;
 
       case 'reload':
-        page.reload({ timeout: 20000, waitUntil: 'domcontentloaded' }).catch(() => {});
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'loading', loading: true }));
+        }
+        page.reload({ timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
         break;
 
       case 'back':
-        page.goBack({ timeout: 20000, waitUntil: 'domcontentloaded' }).catch(() => {});
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'loading', loading: true }));
+        }
+        page.goBack({ timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
         break;
 
       case 'forward':
-        page.goForward({ timeout: 20000, waitUntil: 'domcontentloaded' }).catch(() => {});
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'loading', loading: true }));
+        }
+        page.goForward({ timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
         break;
 
       case 'mouse':
@@ -314,9 +652,20 @@ wss.on('connection', (ws) => {
       case 'resize':
         if (msg.width >= 200 && msg.height >= 200) {
           const aspect = (msg.width || 16) / (msg.height || 9);
-          // クラウド環境で60FPSを維持するため最大解像度を 720x405 に最適化クランプ
-          const MAX_W = 720;
-          const MAX_H = 405;
+          
+          let MAX_W = 1280;
+          let MAX_H = 720;
+          if (currentPreset === 'eco') {
+            MAX_W = 640;
+            MAX_H = 360;
+          } else if (currentPreset === 'hd') {
+            MAX_W = 1920;
+            MAX_H = 1080;
+          } else {
+            MAX_W = 1024;
+            MAX_H = 576;
+          }
+
           let targetWidth = Math.min(MAX_W, Math.max(320, Math.round(msg.width)));
           let targetHeight = Math.round(targetWidth / aspect);
           if (targetHeight > MAX_H) {
@@ -337,7 +686,35 @@ wss.on('connection', (ws) => {
 
       case 'setQuality':
         if (msg.quality >= 10 && msg.quality <= 100) {
-          await startScreencast(msg.quality);
+          await startScreencast(msg.quality, currentFormat);
+        }
+        break;
+
+      case 'setPreset':
+        if (['eco', 'balanced', 'hd'].includes(msg.preset)) {
+          currentPreset = msg.preset;
+          if (currentPreset === 'eco') {
+            currentQuality = 25;
+            currentWidth = 640;
+            currentHeight = 360;
+          } else if (currentPreset === 'hd') {
+            currentQuality = 60;
+            currentWidth = 1280;
+            currentHeight = 720;
+          } else {
+            currentQuality = 35;
+            currentWidth = 1024;
+            currentHeight = 576;
+          }
+          await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 }).catch(() => {});
+          await startScreencast(currentQuality, currentFormat);
+        }
+        break;
+
+      case 'setFormat':
+        if (['jpeg', 'webp'].includes(msg.format)) {
+          currentFormat = msg.format;
+          await startScreencast(currentQuality, currentFormat);
         }
         break;
     }
@@ -352,6 +729,9 @@ wss.on('connection', (ws) => {
       if (msg.type === 'init') {
         if (msg.binary) {
           isBinaryMode = true;
+        }
+        if (msg.format && ['jpeg', 'webp'].includes(msg.format)) {
+          currentFormat = msg.format;
         }
         return;
       }
@@ -425,11 +805,20 @@ wss.on('connection', (ws) => {
             const len = left.length;
 
             const i16 = new Int16Array(len * 2);
+            let hasSound = false;
             for (let i = 0; i < len; i++) {
-              i16[i * 2] = Math.max(-32768, Math.min(32767, Math.round(left[i] * 32767)));
-              i16[i * 2 + 1] = Math.max(-32768, Math.min(32767, Math.round(right[i] * 32767)));
+              const lVal = Math.max(-32768, Math.min(32767, Math.round(left[i] * 32767)));
+              const rVal = Math.max(-32768, Math.min(32767, Math.round(right[i] * 32767)));
+              i16[i * 2] = lVal;
+              i16[i * 2 + 1] = rVal;
+              if (Math.abs(lVal) > 10 || Math.abs(rVal) > 10) {
+                hasSound = true;
+              }
             }
-            audioWs.send(i16.buffer);
+            // 無音パケットは送信をスキップして帯域を劇的に節約
+            if (hasSound) {
+              audioWs.send(i16.buffer);
+            }
           }
 
           const OrigAudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -506,14 +895,19 @@ wss.on('connection', (ws) => {
 
       cdp = await page.createCDPSession();
 
+      // 🛡️ 広告・トラッカーのサーバーサイド遮断 (AdBlocker)
+      await cdp.send('Network.enable').catch(() => {});
+      await cdp.send('Network.setBlockedURLs', {
+        urls: BLOCKED_URL_PATTERNS
+      }).catch(() => {});
+
       // Screencast フレーム配信パイプライン (ゼロコピー・超低遅延 60 FPS 対応)
       cdp.on('Page.screencastFrame', ({ data, sessionId: frameSessionId, metadata }) => {
-        // 次のフレーム描画をブロックしないよう、即座にACKを返信
         cdp.send('Page.screencastFrameAck', { sessionId: frameSessionId }).catch(() => {});
 
         if (ws.readyState !== ws.OPEN) return;
 
-        // バックプレッシャー制御 (バッファが溜まりすぎた場合のみドロップ)
+        // バックプレッシャー制御 (バッファ過多時にドロップ)
         if (ws.bufferedAmount > 65536) {
           return;
         }
@@ -550,6 +944,10 @@ wss.on('connection', (ws) => {
                 url,
                 title
               }));
+              ws.send(JSON.stringify({
+                type: 'loading',
+                loading: false
+              }));
             } catch (e) {}
           }
         }, 50);
@@ -561,13 +959,24 @@ wss.on('connection', (ws) => {
         }
       });
 
-      page.on('load', sendNavigated);
-      page.on('domcontentloaded', sendNavigated);
+      page.on('load', () => {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'loading', loading: false }));
+        }
+        sendNavigated();
+      });
+
+      page.on('domcontentloaded', () => {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'loading', loading: false }));
+        }
+        sendNavigated();
+      });
 
       await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });
       await startScreencast();
 
-      page.goto('https://www.google.com', { timeout: 20000, waitUntil: 'domcontentloaded' }).catch(() => {});
+      page.goto('https://www.google.com', { timeout: 25000, waitUntil: 'domcontentloaded' }).catch(() => {});
       sendNavigated();
 
       isReady = true;
@@ -586,13 +995,42 @@ wss.on('connection', (ws) => {
   })();
 });
 
+// ngrok バックグラウンド自動起動マネージャー
+function ensureNgrokTunnel() {
+  exec(`pgrep -f "ngrok.*${PORT}"`, (err, stdout) => {
+    if (stdout && stdout.trim().length > 0) {
+      console.log(`🌐 ngrok tunnel already active (PID: ${stdout.trim().split('\n')[0]}). URL: https://${NGROK_DOMAIN}`);
+      return;
+    }
+
+    console.log(`🚀 Starting ngrok background tunnel for domain: ${NGROK_DOMAIN}...`);
+    const ngrokCmd = `ngrok http ${PORT} --url=${NGROK_DOMAIN}`;
+    const child = spawn('/bin/sh', ['-c', `${ngrokCmd} > /tmp/ngrok.log 2>&1 &`], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.unref();
+
+    setTimeout(() => {
+      console.log(`🎉 ngrok tunnel successfully launched! Access at: https://${NGROK_DOMAIN}`);
+    }, 2000);
+  });
+}
+
 // サーバー起動と事前ウォームアップ
 function startServer(port) {
   server.listen(port, '0.0.0.0', async () => {
     console.log(`\n======================================================`);
     console.log(`  🚀 Ultra-Light Cloud Browser (60 FPS & Pure Audio) running on port ${port}`);
-    console.log(`  🔗 Open: http://0.0.0.0:${port}`);
+    console.log(`  🔗 Local:  http://0.0.0.0:${port}`);
+    console.log(`  🌐 Public: https://${NGROK_DOMAIN}`);
+    console.log(`  🛡️ ngrok Keep-Alive: Enabled (Auto-Open & Auto-Healing)`);
     console.log(`======================================================\n`);
+
+    ensureNgrokTunnel();
+
+    // 24時間停止防止・定期自動オープン機能を開始
+    keepAliveManager.start();
 
     try {
       await initBrowser();
@@ -606,6 +1044,7 @@ function startServer(port) {
 // 終了時のプロセス・リソース解放
 async function cleanup() {
   console.log('\nGracefully shutting down server and Chromium instances...');
+  keepAliveManager.stop();
   if (browser) {
     try { await browser.close(); } catch (e) {}
     browser = null;

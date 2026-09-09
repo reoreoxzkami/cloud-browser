@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cloud-browser-portal",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-01",
+  "kv_namespaces": [
+    {
+      "binding": "BROWSER_KV",
+      "id": "b29cc95a8e944753bebaf7cbaef466c6"
+    }
+  ],
+  "vars": {
+    "UPDATE_TOKEN": "82bc0a571e659581657a3df36d794432"
+  }
+}

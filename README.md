@@ -16,6 +16,8 @@
   Ping (RTT レイテンシ) & FPS のリアルタイム計測表示。
 - 🎛️ **動的画質調整スライダー**:
   回線状況に応じて JPEG 画質 (30%〜100%) をリアルタイムに切り替え可能。
+- 🛡️ **ngrok 24時間停止防止・定期自動オープン (Keep-Alive Engine)**:
+  クラウド無料ホスティング (Render / Koyeb 等) の15分無通信スリープや ngrok 無料トンネルの切断を防止するため、定期的に自動で ngrok サイトを開いてアクセスし、常時稼働を維持。UI上で稼働状況の確認や手動Pingも可能。
 - 🐳 **Docker / クラウド完全対応**:
   1 コマンドで Docker コンテナとして立ち上げ可能。日本語フォント同梱で文字化けゼロ。
 
@@ -48,9 +50,25 @@ docker compose up -d --build
 
 ## 📁 プロジェクト構成
 
-- `server.js`: ヘッドレス Chrome の起動管理、CDP セッション制御、WebSocket ストリーミングサーバー
-- `public/index.html`: ブラウザ UI（アドレスバー、ナビゲーション、画質スライダー、Canvas）
+- `server.js`: ヘッドレス Chrome の起動管理、CDP セッション制御、WebSocket ストリーミングサーバー、ngrok 24時間停止防止エンジン
+- `public/index.html`: ブラウザ UI（アドレスバー、ナビゲーション、画質スライダー、停止防止ステータス、Canvas）
 - `public/style.css`: 洗練されたモダン・ダークテーマ UI スタイル
-- `public/app.js`: Canvas レンダリング、マウス/キーボード入力イベントの補正・高速送信、Ping 計測
+- `public/app.js`: Canvas レンダリング、マウス/キーボード入力イベントの補正、停止防止マネージャーUI制御
+- `keep-alive.js`: 独立型 24時間停止防止・定期 Ping スクリプト
+- `run-ngrok-24h.sh`: 24時間 ngrok 自動再接続 ＆ バックグラウンド Keep-Alive スクリプト
 - `Dockerfile`: Debian Slim + Chromium + 日本語フォント構成
 - `docker-compose.yml`: コンテナ起動設定 (shm_size 最適化済み)
+- `run-cloudflare-relay.sh`: Cloudflare Tunnel 起動 ＆ 中継ポータル自動更新スクリプト
+- `deploy-portal-pages.sh`: Cloudflare Pages 向け中継サイトデプロイスクリプト
+- `relay-worker/`: Cloudflare CLI (wrangler) でデプロイされた常時更新中継ポータル Worker
+
+---
+
+## 🌐 外部公開・固定中継ポータル (Cloudflare)
+
+Cloudflare CLI (`wrangler`) を使って中継ポータルをデプロイし、Cloudflare Quick Tunnel の一時URLが変わっても自動で最新URLへ誘導・転送します。
+
+- **中継ポータル固定URL**: `https://cloud-browser-portal.sannon2026.workers.dev`
+- **ダイレクト即時リダイレクト**: `https://cloud-browser-portal.sannon2026.workers.dev/go`
+- **24時間自動起動サービス**: `cloud-browser-cloudflare.service` (systemd)
+

@@ -1,10 +1,13 @@
 {
   "name": "ultra-light-cloud-browser",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Ultra-lightweight, ultra-low-latency Cloud Remote Browser",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "keep-alive": "node keep-alive.js",
+    "tunnel:ngrok": "./run-ngrok-24h.sh",
+    "start:all": "node server.js"
   },
   "dependencies": {
     "express": "^4.21.2",

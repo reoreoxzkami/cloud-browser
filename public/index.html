@@ -9,26 +9,42 @@
 </head>
 <body>
   <div class="browser-window">
-    <!-- ツールバー -->
+    <!-- ページ読み込みプログレスバー -->
+    <div id="progress-bar" class="progress-bar"></div>
+
+    <!-- メインツールバー -->
     <header class="browser-toolbar">
       <div class="nav-controls">
-        <button id="btn-back" title="戻る"><i class="fa-solid fa-arrow-left"></i></button>
-        <button id="btn-forward" title="進む"><i class="fa-solid fa-arrow-right"></i></button>
-        <button id="btn-reload" title="更新"><i class="fa-solid fa-rotate-right"></i></button>
+        <button id="btn-back" title="戻る (Alt+Left)"><i class="fa-solid fa-arrow-left"></i></button>
+        <button id="btn-forward" title="進む (Alt+Right)"><i class="fa-solid fa-arrow-right"></i></button>
+        <button id="btn-reload" title="更新 (Ctrl+R)"><i class="fa-solid fa-rotate-right"></i></button>
+        <button id="btn-home" title="ホーム"><i class="fa-solid fa-house"></i></button>
       </div>
 
-      <!-- アドレスバー -->
-      <div class="address-bar-wrapper">
-        <i class="fa-solid fa-lock ssl-icon"></i>
-        <input type="text" id="url-bar" placeholder="URLまたは検索キーワードを入力..." spellcheck="false" autocomplete="off">
-        <button id="btn-go" title="移動"><i class="fa-solid fa-arrow-turn-down fa-rotate-90"></i></button>
+      <!-- アドレスバー & サジェスト -->
+      <div class="address-bar-container">
+        <div class="address-bar-wrapper">
+          <i class="fa-solid fa-lock ssl-icon"></i>
+          <input type="text" id="url-bar" placeholder="URL または Google 検索キーワードを入力..." spellcheck="false" autocomplete="off">
+          <button id="btn-paste" title="クリップボードから貼り付け"><i class="fa-solid fa-paste"></i></button>
+          <button id="btn-go" title="移動 (Enter)"><i class="fa-solid fa-arrow-turn-down fa-rotate-90"></i></button>
+        </div>
+        <!-- Google サジェストドロップダウン -->
+        <div id="suggest-box" class="suggest-box hidden"></div>
       </div>
 
       <!-- かな文字・日本語クイック入力バー -->
       <div class="ime-bar-wrapper" title="クリックした場所に日本語（かな・漢字）を直接入力して送信">
         <i class="fa-solid fa-keyboard ime-icon"></i>
-        <input type="text" id="ime-text-bar" placeholder="日本語・かな入力..." autocomplete="off">
+        <input type="text" id="ime-text-bar" placeholder="日本語・かな直接入力..." autocomplete="off">
         <button id="btn-ime-send" title="送信 (Enter)"><i class="fa-solid fa-paper-plane"></i></button>
+      </div>
+
+      <!-- 画質・解像度プリセット -->
+      <div class="preset-controls" title="解像度 & 速度プリセット">
+        <button class="preset-btn" data-preset="eco" title="超低遅延・高速 (360p / 60FPS)">⚡ 360p</button>
+        <button class="preset-btn active" data-preset="balanced" title="標準バランス (720p / 45FPS)">⚖️ 720p</button>
+        <button class="preset-btn" data-preset="hd" title="高精細・クリア (1080p / 30FPS)">🖥️ 1080p</button>
       </div>
 
       <!-- コントロール -->
@@ -39,46 +55,140 @@
           <input type="range" id="volume-slider" min="0" max="100" value="100" title="音量調節">
         </div>
 
-        <div class="quality-control" title="画質・速度設定">
+        <div class="quality-control" title="画質スライダー微調整">
           <i class="fa-solid fa-sliders"></i>
-          <span id="quality-label">35% (超高速 60FPS)</span>
-          <input type="range" id="quality-slider" min="20" max="100" value="35" step="5">
+          <span id="quality-label">35%</span>
+          <input type="range" id="quality-slider" min="15" max="100" value="35" step="5">
         </div>
 
-        <div class="stats-badge" title="Pingレイテンシ & FPS">
+        <!-- 広告ブロック状態 -->
+        <div class="adblock-badge" title="サーバーサイド広告・トラッカー遮断 (AdBlock) が有効です">
+          <i class="fa-solid fa-shield-halved"></i>
+          <span>AdBlock</span>
+        </div>
+
+        <!-- ngrok 24時間停止防止・Keep-Alive バッジ -->
+        <div class="keepalive-badge" id="btn-keepalive-modal" title="ngrok 24時間停止防止・定期自動オープン稼働中 (クリックで詳細)">
+          <span class="keepalive-dot"></span>
+          <i class="fa-solid fa-bolt-lightning keepalive-icon"></i>
+          <span id="keepalive-status-text">停止防止: 稼働中</span>
+        </div>
+
+        <!-- ステータス (Ping / FPS) -->
+        <div class="stats-badge" title="Pingレイテンシ & リアルタイムFPS">
           <span class="status-dot"></span>
           <span id="ping-text">-- ms</span>
           <span class="divider">|</span>
           <span id="fps-text">-- fps</span>
         </div>
 
-        <button id="btn-fullscreen" title="全画面表示"><i class="fa-solid fa-expand"></i></button>
+        <button id="btn-fullscreen" title="全画面表示 (F11)"><i class="fa-solid fa-expand"></i></button>
       </div>
     </header>
+
+    <!-- クイックアクセスバー (スピードダイヤル) -->
+    <nav class="quick-access-bar">
+      <span class="quick-label"><i class="fa-solid fa-compass"></i> クイック:</span>
+      <button class="quick-link" data-url="https://www.google.com"><i class="fa-brands fa-google"></i> Google</button>
+      <button class="quick-link" data-url="https://www.youtube.com"><i class="fa-brands fa-youtube" style="color: #ff4b4b;"></i> YouTube</button>
+      <button class="quick-link" data-url="https://x.com"><i class="fa-brands fa-x-twitter"></i> X (Twitter)</button>
+      <button class="quick-link" data-url="https://github.com"><i class="fa-brands fa-github"></i> GitHub</button>
+      <button class="quick-link" data-url="https://chatgpt.com"><i class="fa-solid fa-robot" style="color: #10a37f;"></i> ChatGPT</button>
+      <button class="quick-link" data-url="https://ja.wikipedia.org"><i class="fa-brands fa-wikipedia-w"></i> Wikipedia</button>
+      <button class="quick-link" data-url="https://www.yahoo.co.jp"><i class="fa-solid fa-y" style="color: #ff0033;"></i> Yahoo! JAPAN</button>
+      <button class="quick-link" data-url="https://www.twitch.tv"><i class="fa-brands fa-twitch" style="color: #9146ff;"></i> Twitch</button>
+    </nav>
 
     <!-- メイン表示領域 (Canvas) -->
     <main class="viewport-container" id="viewport-container">
       <canvas id="browser-canvas" tabindex="0"></canvas>
-      <!-- 日本語IME・文字入力用レイヤー -->
+      
+      <!-- 日本語IME・文字入力用追従レイヤー -->
       <textarea id="ime-hidden-input" class="ime-hidden-input" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"></textarea>
       
       <!-- ローディングオーバーレイ -->
       <div id="loading-overlay" class="overlay">
         <div class="spinner"></div>
-        <p id="loading-text">クラウドブラウザに接続中...</p>
+        <p id="loading-text">超軽量クラウドブラウザに接続中...</p>
       </div>
     </main>
 
     <!-- フッター -->
     <footer class="browser-footer">
       <div class="footer-left">
-        <span class="tip-tag">リアルタイム音声</span>
-        <span>YouTubeや動画・音声コンテンツのサウンドがWeb Audio経由でリアルタイムに再生されます</span>
+        <span class="tip-tag">AdBlock 有効</span>
+        <span>広告・トラッカーをサーバー側で自動遮断して爆速ストリーミング</span>
+        <span class="divider-dot">•</span>
+        <span class="tip-tag">音声同期</span>
+        <span>YouTube等のサウンドをWeb Audio経由でリアルタイム再生</span>
       </div>
       <div class="footer-right">
-        <span id="resolution-text">1280 × 800</span>
+        <span id="format-badge" class="format-badge">JPEG</span>
+        <span id="resolution-text">1024 × 576</span>
       </div>
     </footer>
+  </div>
+
+  <!-- ngrok 24時間停止防止マネージャー モーダル -->
+  <div id="keepalive-modal" class="modal hidden">
+    <div class="modal-backdrop" id="keepalive-modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">
+          <i class="fa-solid fa-shield-heart" style="color: #10b981;"></i>
+          <span>ngrok 24時間停止防止・自動オープン設定</span>
+        </div>
+        <button id="btn-close-keepalive-modal" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="keepalive-intro">
+          クラウド・無料サーバー（Render, Koyeb等）の15分無通信スリープやngrokトンネルの切断を防止するため、定期的に自動でngrokサイトを開いて常時稼働を維持します。
+        </div>
+
+        <div class="keepalive-card">
+          <div class="keepalive-card-row">
+            <span class="label"><i class="fa-solid fa-signal"></i> 稼働状態:</span>
+            <span class="val status-val" id="modal-keepalive-status">🟢 稼働中 (自動オープン待機中)</span>
+          </div>
+          <div class="keepalive-card-row">
+            <span class="label"><i class="fa-solid fa-link"></i> 公開URL:</span>
+            <a href="#" id="modal-keepalive-url" target="_blank" class="val-link">--</a>
+          </div>
+          <div class="keepalive-card-row">
+            <span class="label"><i class="fa-solid fa-clock"></i> 自動アクセス間隔:</span>
+            <span class="val" id="modal-keepalive-interval">5分 (300秒)</span>
+          </div>
+          <div class="keepalive-card-row">
+            <span class="label"><i class="fa-regular fa-hourglass-half"></i> 次回自動オープン:</span>
+            <span class="val countdown-val" id="modal-keepalive-countdown">--秒後</span>
+          </div>
+          <div class="keepalive-card-row">
+            <span class="label"><i class="fa-solid fa-chart-simple"></i> 累計アクセス実績:</span>
+            <span class="val" id="modal-keepalive-stats">成功: 0回 / 失敗: 0回</span>
+          </div>
+          <div class="keepalive-card-row">
+            <span class="label"><i class="fa-solid fa-globe"></i> ブラウザ自動オープン:</span>
+            <span class="val" id="modal-keepalive-browser">有効 (Chromium完全描画)</span>
+          </div>
+        </div>
+
+        <div class="keepalive-actions">
+          <button id="btn-trigger-keepalive" class="btn-action-primary">
+            <i class="fa-solid fa-rotate"></i> 今すぐ ngrok サイトを開いてPing
+          </button>
+          <a href="#" id="btn-open-ngrok-tab" target="_blank" class="btn-action-secondary">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i> 外部ブラウザで直接開く
+          </a>
+        </div>
+
+        <div class="keepalive-log-section">
+          <div class="keepalive-log-title"><i class="fa-solid fa-list-ul"></i> 最近のアクセス履歴:</div>
+          <div id="keepalive-log-list" class="keepalive-log-list">
+            <div class="log-empty">アクセス待機中...</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
