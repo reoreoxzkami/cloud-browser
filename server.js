@@ -145,7 +145,7 @@ class NgrokKeepAliveManager {
       browserVisits: 0,
       history: []
     };
-    this.browserVisitEnabled = process.env.KEEP_ALIVE_BROWSER_VISIT !== 'false';
+    this.browserVisitEnabled = process.env.KEEP_ALIVE_BROWSER_VISIT === 'true';
   }
 
   updateHost(host) {
@@ -476,25 +476,17 @@ async function initBrowser() {
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
         '--no-first-run',
         '--no-zygote',
-        '--renderer-process-limit=2',
-        '--js-flags=--max-old-space-size=512',
-        '--autoplay-policy=no-user-gesture-required',
+        '--renderer-process-limit=1',
+        '--js-flags=--max-old-space-size=256',
+        '--autoplay-policy=user-gesture-required',
         '--disable-web-security',
         '--allow-running-insecure-content',
         '--disable-blink-features=AutomationControlled',
         '--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-        '--disable-gpu-vsync',
-        '--disable-frame-rate-limit',
-        '--enable-gpu-rasterization',
-        '--enable-zero-copy',
-        '--ignore-gpu-blocklist',
-        '--num-raster-threads=2',
-        '--enable-accelerated-2d-canvas',
-        '--enable-accelerated-video-decode',
-        '--enable-threaded-compositing',
-        '--enable-features=CanvasOopRasterization,VaapiVideoDecoder',
         '--disable-background-networking',
         '--disable-background-timer-throttling',
         '--disable-backgrounding-occluded-windows',
@@ -515,9 +507,8 @@ async function initBrowser() {
         '--no-default-browser-check',
         '--password-store=basic',
         '--use-mock-keychain',
-        '--force-color-profile=srgb',
         '--hide-scrollbars',
-        '--window-size=1280,800'
+        '--window-size=1024,600'
       ]
     });
 
@@ -554,11 +545,11 @@ wss.on('connection', (ws) => {
 
   let page = null;
   let cdp = null;
-  let currentWidth = 1024;
-  let currentHeight = 576;
-  let currentQuality = 35;
+  let currentWidth = 854;
+  let currentHeight = 480;
+  let currentQuality = 25;
   let currentFormat = 'jpeg'; // 'jpeg' or 'webp'
-  let currentPreset = 'balanced'; // 'eco', 'balanced', 'hd'
+  let currentPreset = 'eco'; // 'eco', 'balanced', 'hd'
   let isScreencasting = false;
   let isBinaryMode = true;
   const pendingMessages = [];
@@ -582,7 +573,7 @@ wss.on('connection', (ws) => {
         quality: currentQuality,
         maxWidth: currentWidth,
         maxHeight: currentHeight,
-        everyNthFrame: 1
+        everyNthFrame: 2
       });
       isScreencasting = true;
     } catch (e) {
@@ -950,8 +941,8 @@ wss.on('connection', (ws) => {
 
         if (ws.readyState !== ws.OPEN) return;
 
-        // バックプレッシャー制御 (バッファ過多時にドロップ)
-        if (ws.bufferedAmount > 65536) {
+        // バックプレッシャー制御 (バッファ過多時に即ドロップして遅延蓄積を防止)
+        if (ws.bufferedAmount > 32768) {
           return;
         }
 
@@ -1014,6 +1005,9 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({ type: 'loading', loading: false }));
         }
         sendNavigated();
+        page.addStyleTag({
+          content: '*, *::before, *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; }'
+        }).catch(() => {});
       });
 
       await page.setViewport({ width: currentWidth, height: currentHeight, deviceScaleFactor: 1 });

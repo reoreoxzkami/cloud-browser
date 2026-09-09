@@ -49,7 +49,7 @@
   let ws = null;
   let isConnected = false;
   let isComposing = false;
-  let currentPreset = 'balanced';
+  let currentPreset = 'eco';
   let selectedSuggestIndex = -1;
   let suggestList = [];
 
@@ -475,7 +475,7 @@
 
   canvas.addEventListener('mousemove', (e) => {
     const now = performance.now();
-    if (now - lastMouseMoveTime < 24) return;
+    if (now - lastMouseMoveTime < 45) return;
     lastMouseMoveTime = now;
 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
