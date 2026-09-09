@@ -475,7 +475,9 @@
 
   canvas.addEventListener('mousemove', (e) => {
     const now = performance.now();
-    if (now - lastMouseMoveTime < 45) return;
+    const isDragging = (e.buttons && e.buttons > 0);
+    const throttleLimit = isDragging ? 35 : 75;
+    if (now - lastMouseMoveTime < throttleLimit) return;
     lastMouseMoveTime = now;
 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -483,7 +485,7 @@
     const rx = Math.round(x);
     const ry = Math.round(y);
 
-    if (rx === lastMouseX && ry === lastMouseY) return;
+    if (Math.abs(rx - lastMouseX) < 2 && Math.abs(ry - lastMouseY) < 2) return;
     lastMouseX = rx;
     lastMouseY = ry;
 

@@ -108,7 +108,13 @@ const BLOCKED_URL_PATTERNS = [
   '*moatads.com*',
   '*exponential.com*',
   '*yieldmo.com*',
-  '*teads.tv*'
+  '*teads.tv*',
+  '*.woff2*',
+  '*.woff*',
+  '*analytics.google.com*',
+  '*google-analytics.com*',
+  '*googletagmanager.com*',
+  '*facebook.net*'
 ];
 
 // ヘルスチェック用エンドポイント
@@ -545,9 +551,9 @@ wss.on('connection', (ws) => {
 
   let page = null;
   let cdp = null;
-  let currentWidth = 854;
-  let currentHeight = 480;
-  let currentQuality = 25;
+  let currentWidth = 640;
+  let currentHeight = 360;
+  let currentQuality = 20;
   let currentFormat = 'jpeg'; // 'jpeg' or 'webp'
   let currentPreset = 'eco'; // 'eco', 'balanced', 'hd'
   let isScreencasting = false;
@@ -573,7 +579,7 @@ wss.on('connection', (ws) => {
         quality: currentQuality,
         maxWidth: currentWidth,
         maxHeight: currentHeight,
-        everyNthFrame: 2
+        everyNthFrame: 4
       });
       isScreencasting = true;
     } catch (e) {
@@ -815,117 +821,121 @@ wss.on('connection', (ws) => {
       page = await b.newPage();
       await page.setUserAgent('Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36');
 
-      // ページ内超高速バイナリオーディオパイプラインのインジェクション
+      // 基本プロパティ設定 (webdriver 非表示)
       await page.evaluateOnNewDocument(`
         Object.defineProperty(navigator, 'webdriver', { get: () => false });
+      `);
 
-        (function() {
-          const sessId = ${JSON.stringify(sessionId)};
-          const port = ${PORT};
+      // ENABLE_AUDIO=true のときのみ重いWebAudioフックを起動 (デフォルト無効で超軽量動作)
+      if (process.env.ENABLE_AUDIO === 'true') {
+        await page.evaluateOnNewDocument(`
+          (function() {
+            const sessId = ${JSON.stringify(sessionId)};
+            const port = ${PORT};
 
-          let audioWs = null;
-          function connectWs() {
-            try {
-              audioWs = new WebSocket('ws://localhost:' + port + '/audio-pipe?session=' + sessId);
-              audioWs.binaryType = 'arraybuffer';
-              audioWs.onclose = () => setTimeout(connectWs, 1000);
-              audioWs.onerror = () => {};
-            } catch(e) {}
-          }
-          connectWs();
-
-          function sendPcmAudio(left, right) {
-            if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return;
-            const len = left.length;
-
-            const i16 = new Int16Array(len * 2);
-            let hasSound = false;
-            for (let i = 0; i < len; i++) {
-              const lVal = Math.max(-32768, Math.min(32767, Math.round(left[i] * 32767)));
-              const rVal = Math.max(-32768, Math.min(32767, Math.round(right[i] * 32767)));
-              i16[i * 2] = lVal;
-              i16[i * 2 + 1] = rVal;
-              if (Math.abs(lVal) > 10 || Math.abs(rVal) > 10) {
-                hasSound = true;
-              }
-            }
-            // 無音パケットは送信をスキップして帯域を劇的に節約
-            if (hasSound) {
-              audioWs.send(i16.buffer);
-            }
-          }
-
-          const OrigAudioCtx = window.AudioContext || window.webkitAudioContext;
-          let primaryAudioCtx = null;
-          let primaryProcessor = null;
-
-          function getPrimaryAudioContext() {
-            if (primaryAudioCtx) return primaryAudioCtx;
-            if (!OrigAudioCtx) return null;
-            try {
-              primaryAudioCtx = new OrigAudioCtx({ sampleRate: 44100 });
-              primaryProcessor = primaryAudioCtx.createScriptProcessor(2048, 2, 2);
-              primaryProcessor.onaudioprocess = (e) => {
-                sendPcmAudio(e.inputBuffer.getChannelData(0), e.inputBuffer.getChannelData(1));
-              };
-              const gain = primaryAudioCtx.createGain();
-              gain.gain.value = 1.0;
-              primaryProcessor.connect(gain);
-              gain.connect(primaryAudioCtx.destination);
-              return primaryAudioCtx;
-            } catch(e) {
-              return null;
-            }
-          }
-
-          function hookMediaElement(el) {
-            if (el.__cloudAudioHooked) return;
-            const ctx = getPrimaryAudioContext();
-            if (!ctx) return;
-            try {
-              el.__cloudAudioHooked = true;
-              el.muted = false;
-              if (el.volume < 1.0) el.volume = 1.0;
-
-              const source = ctx.createMediaElementSource(el);
-              source.connect(primaryProcessor);
-              source.connect(ctx.destination);
-
-              if (ctx.state === 'suspended') ctx.resume().catch(() => {});
-            } catch(e) {}
-          }
-
-          function scanAllMedia() {
-            document.querySelectorAll('video, audio').forEach(hookMediaElement);
-          }
-
-          function initHooks() {
-            scanAllMedia();
-            if (document.documentElement) {
+            let audioWs = null;
+            function connectWs() {
               try {
-                new MutationObserver(scanAllMedia).observe(document.documentElement, { childList: true, subtree: true });
+                audioWs = new WebSocket('ws://localhost:' + port + '/audio-pipe?session=' + sessId);
+                audioWs.binaryType = 'arraybuffer';
+                audioWs.onclose = () => setTimeout(connectWs, 1000);
+                audioWs.onerror = () => {};
               } catch(e) {}
             }
-          }
+            connectWs();
 
-          if (document.readyState === 'loading') {
-            window.addEventListener('DOMContentLoaded', initHooks);
-          } else {
-            initHooks();
-          }
-          window.addEventListener('load', initHooks);
+            function sendPcmAudio(left, right) {
+              if (!audioWs || audioWs.readyState !== WebSocket.OPEN) return;
+              const len = left.length;
 
-          ['play', 'playing', 'timeupdate', 'canplay', 'loadeddata'].forEach(evt => {
-            document.addEventListener(evt, (e) => {
-              if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
-                hookMediaElement(e.target);
-                const ctx = getPrimaryAudioContext();
-                if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+              const i16 = new Int16Array(len * 2);
+              let hasSound = false;
+              for (let i = 0; i < len; i++) {
+                const lVal = Math.max(-32768, Math.min(32767, Math.round(left[i] * 32767)));
+                const rVal = Math.max(-32768, Math.min(32767, Math.round(right[i] * 32767)));
+                i16[i * 2] = lVal;
+                i16[i * 2 + 1] = rVal;
+                if (Math.abs(lVal) > 10 || Math.abs(rVal) > 10) {
+                  hasSound = true;
+                }
               }
-            }, true);
-          });
-        })();
-      `);
+              if (hasSound) {
+                audioWs.send(i16.buffer);
+              }
+            }
+
+            const OrigAudioCtx = window.AudioContext || window.webkitAudioContext;
+            let primaryAudioCtx = null;
+            let primaryProcessor = null;
+
+            function getPrimaryAudioContext() {
+              if (primaryAudioCtx) return primaryAudioCtx;
+              if (!OrigAudioCtx) return null;
+              try {
+                primaryAudioCtx = new OrigAudioCtx({ sampleRate: 44100 });
+                primaryProcessor = primaryAudioCtx.createScriptProcessor(2048, 2, 2);
+                primaryProcessor.onaudioprocess = (e) => {
+                  sendPcmAudio(e.inputBuffer.getChannelData(0), e.inputBuffer.getChannelData(1));
+                };
+                const gain = primaryAudioCtx.createGain();
+                gain.gain.value = 1.0;
+                primaryProcessor.connect(gain);
+                gain.connect(primaryAudioCtx.destination);
+                return primaryAudioCtx;
+              } catch(e) {
+                return null;
+              }
+            }
+
+            function hookMediaElement(el) {
+              if (el.__cloudAudioHooked) return;
+              const ctx = getPrimaryAudioContext();
+              if (!ctx) return;
+              try {
+                el.__cloudAudioHooked = true;
+                el.muted = false;
+                if (el.volume < 1.0) el.volume = 1.0;
+
+                const source = ctx.createMediaElementSource(el);
+                source.connect(primaryProcessor);
+                source.connect(ctx.destination);
+
+                if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+              } catch(e) {}
+            }
+
+            function scanAllMedia() {
+              document.querySelectorAll('video, audio').forEach(hookMediaElement);
+            }
+
+            function initHooks() {
+              scanAllMedia();
+              if (document.documentElement) {
+                try {
+                  new MutationObserver(scanAllMedia).observe(document.documentElement, { childList: true, subtree: true });
+                } catch(e) {}
+              }
+            }
+
+            if (document.readyState === 'loading') {
+              window.addEventListener('DOMContentLoaded', initHooks);
+            } else {
+              initHooks();
+            }
+            window.addEventListener('load', initHooks);
+
+            ['play', 'playing', 'timeupdate', 'canplay', 'loadeddata'].forEach(evt => {
+              document.addEventListener(evt, (e) => {
+                if (e.target && (e.target.tagName === 'VIDEO' || e.target.tagName === 'AUDIO')) {
+                  hookMediaElement(e.target);
+                  const ctx = getPrimaryAudioContext();
+                  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+                }
+              }, true);
+            });
+          })();
+        `);
+      }
 
       cdp = await page.createCDPSession();
 
@@ -941,8 +951,8 @@ wss.on('connection', (ws) => {
 
         if (ws.readyState !== ws.OPEN) return;
 
-        // バックプレッシャー制御 (バッファ過多時に即ドロップして遅延蓄積を防止)
-        if (ws.bufferedAmount > 32768) {
+        // バックプレッシャー制御 (バッファ過多時に即ドロップして遅延蓄積を完全防止)
+        if (ws.bufferedAmount > 16384) {
           return;
         }
 
